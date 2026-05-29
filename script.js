@@ -4486,8 +4486,8 @@ window.openTurnoModal = (id=null, dateStr=null) => {
   document.getElementById('tResidenteClienteWrap').style.display = esRes ? 'block' : 'none';
   if (esRes) {
     const sel = document.getElementById('tResidenteCliente');
-    const opts = doctors.map(d =>
-      `<option value="${escHtml(d.id)}" ${t?.residenteClienteId===d.id?'selected':''}>${escHtml(d.nombre)}${d.especialista?' — '+escHtml(d.especialista):''}</option>`
+    const opts = doctors.filter(d=>d.especialista).map(d =>
+      `<option value="${escHtml(d.id)}" ${t?.residenteClienteId===d.id?'selected':''}>${escHtml(d.especialista)}</option>`
     ).join('');
     sel.innerHTML = '<option value="">— Seleccionar cliente —</option>' + opts;
     sel.value = t?.residenteClienteId||'';
@@ -4507,8 +4507,8 @@ window.onTurnoResidenteChange = () => {
   wrap.style.display = checked ? 'block' : 'none';
   if (checked && sel) {
     // Populate with clients
-    const opts = doctors.map(d =>
-      `<option value="${escHtml(d.id)}">${escHtml(d.nombre)}${d.especialista?' — '+escHtml(d.especialista):''}</option>`
+    const opts = doctors.filter(d=>d.especialista).map(d =>
+      `<option value="${escHtml(d.id)}">${escHtml(d.especialista)}</option>`
     ).join('');
     sel.innerHTML = '<option value="">— Seleccionar cliente —</option>' + opts;
   }
