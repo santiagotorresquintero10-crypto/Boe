@@ -1308,14 +1308,7 @@
             <option value="">— Seleccionar —</option>
           </select>
         </div>
-        <div class="fg"><label>Trayecto <span style="font-size:10px;color:var(--gray-3);font-weight:400">(auto por fechas)</span></label>
-          <select id="tTrayecto">
-            <option value="">— Auto —</option>
-            <option value="IDA">IDA</option>
-            <option value="REGRESO">REGRESO</option>
-          </select>
-        </div>
-        <!-- RESIDENTE checkbox + lista de clientes — al lado de especialista -->
+        <!-- RESIDENTE checkbox + lista de clientes -->
         <div class="fg full">
           <label style="display:flex;align-items:center;gap:10px;cursor:pointer;margin-bottom:6px">
             <input type="checkbox" id="tEsResidente" style="width:16px;height:16px;accent-color:var(--blue);cursor:pointer"
@@ -1336,6 +1329,13 @@
           <textarea id="tObservacion" rows="2" placeholder="Notas internas del turno…"
             style="border:1.5px solid var(--gray-2);border-radius:var(--radius-sm);padding:9px 12px;font-size:13px;color:var(--navy);outline:none;font-family:'Nunito',sans-serif;background:white;width:100%;resize:vertical;transition:border-color .2s"
             onfocus="this.style.borderColor='var(--blue)'" onblur="this.style.borderColor='var(--gray-2)'"></textarea>
+        </div>
+        <div class="fg"><label>Trayecto <span style="font-size:10px;color:var(--gray-3);font-weight:400">(auto por fechas)</span></label>
+          <select id="tTrayecto">
+            <option value="">— Auto —</option>
+            <option value="IDA">IDA</option>
+            <option value="REGRESO">REGRESO</option>
+          </select>
         </div>
       </div>
 
