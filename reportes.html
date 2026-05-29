@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>Reportes BOE</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"/>
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+    html,body{font-family:'Nunito',sans-serif;background:#eef1f6;color:#1e2a3a;font-size:13px;}
+
+    /* ══ PRINT — Una sola hoja A4 landscape ══ */
+    @page{ size:A4 landscape; margin:7mm 9mm; }
+    @media print{
+      *{ -webkit-print-color-adjust:exact!important; print-color-adjust:exact!important; }
+      html,body{ margin:0!important; padding:0!important; background:white!important; overflow:visible!important; }
+      body > div{ padding:0!important; background:white!important; }
+      .no-print{ display:none!important; }
+
+      .report-doc{
+        width:100%!important; max-width:100%!important;
+        box-shadow:none!important; border-radius:0!important;
+        overflow:visible!important;
+        page-break-inside:avoid!important; break-inside:avoid!important;
+      }
+
+      /* KPIs: reducir altura */
+      .kpi-row{ gap:6px!important; padding:8px 12px 0!important; }
+      .kpi-card{ padding:8px 12px!important; box-shadow:none!important; }
+      .kpi-card .kpi-num{ font-size:17px!important; }
+
+      /* Charts: reducir padding y altura para que quepan ambas */
+      .charts-row{ gap:5px!important; padding:8px 12px 10px!important; }
+      .chart-panel{ box-shadow:none!important; border:1px solid #dde!important;
+        page-break-inside:avoid!important; break-inside:avoid!important; }
+      .chart-panel canvas{ height:auto!important; }
+
+      /* Header más compacto */
+      .rep-header-print{ padding:8px 14px!important; }
+
+      /* Forzar colores */
+      .kpi-accent-bar{ -webkit-print-color-adjust:exact!important; }
+      .chart-panel-head{ -webkit-print-color-adjust:exact!important; }
+    }
+
+    /* ── Toast ── */
+    .boe-toast{position:fixed;bottom:20px;right:20px;background:#1e2a3a;color:white;padding:10px 18px;border-radius:8px;font-size:13px;font-weight:600;box-shadow:0 4px 16px rgba(0,0,0,.2);z-index:9999;transform:translateY(60px);opacity:0;transition:all .3s ease;pointer-events:none;}
+    .boe-toast.show{transform:translateY(0);opacity:1;}
+    .boe-toast.ok{background:#2e7d32;}
+    .boe-toast.err{background:#c0392b;}
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<div class="boe-toast" id="boeToast"></div>
+
+<script type="text/babel">
+const{useState,useEffect,useRef}=React;
+
+const MESES=['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+const MESES_CAP=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+const MESES_C=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+const fmt  = v=>'$ '+Number(v||0).toLocaleString('es-CO');
+const fmtM = v=>{ const n=Number(v||0); return n>=1000000000?'$'+(n/1e9).toFixed(1)+'B':n>=1000000?'$'+(n/1e6).toFixed(1)+'M':n>=1000?'$'+(n/1000).toFixed(0)+'K':'$'+n.toLocaleString('es-CO'); };
+function shade(hex,p){ const n=parseInt((hex||'#1a3a6b').replace('#',''),16); const r=Math.min(255,Math.max(0,(n>>16)+p*2)); const g=Math.min(255,Math.max(0,((n>>8)&0xff)+p*2)); const b=Math.min(255,Math.max(0,(n&0xff)+p*2)); return '#'+[r,g,b].map(x=>x.toString(16).padStart(2,'0')).join(''); }
+function showToast(msg,type=''){ const el=document.getElementById('boeToast'); el.textContent=msg; el.className='boe-toast show'+(type?' '+type:''); clearTimeout(el._t); el._t=setTimeout(()=>el.className='boe-toast',3000); }
+
+/* ════ CHART: Barras horizontales por entidad ════ */
+function ChartEntidad({data,color,height}){
+  const ref=useRef(null); const inst=useRef(null);
+  useEffect(()=>{
+    if(!ref.current) return;
+    if(inst.current) inst.current.destroy();
+    if(!data.length) return;
+    const max=Math.max(...data.map(d=>d.v),1);
+    inst.current=new Chart(ref.current.getContext('2d'),{
+      type:'bar',
+      data:{
+        labels:data.map(d=>d.l),
+        datasets:[{
+          data:data.map(d=>d.v),
+          backgroundColor:color||'#1a3a6b',
+          borderRadius:5, borderSkipped:false,
+          barThickness:14, maxBarThickness:16,
+        }]
+      },
+      options:{
+        indexAxis:'y', responsive:true, maintainAspectRatio:false, devicePixelRatio:2,
+        layout:{padding:{right:90, top:4, bottom:4, left:4}},
+        plugins:{legend:{display:false}, tooltip:{
+          callbacks:{label:ctx=>fmt(ctx.parsed.x)},
+          bodyFont:{size:12}, padding:8,
+        }},
+        scales:{
+          x:{display:false, beginAtZero:true, max:max*1.35},
+          y:{ticks:{font:{size:11, weight:'600'}, color:'#374151', padding:5},
+             grid:{display:false}, border:{display:false}}
+        }
+      },
+      plugins:[{
+        id:'vals',
+        afterDatasetsDraw(chart){
+          const{ctx,chartArea}=chart;
+          ctx.save(); ctx.textBaseline='middle';
+          chart.getDatasetMeta(0).data.forEach((bar,i)=>{
+            const val=fmt(data[i].v); const tw=ctx.measureText(val).width;
+            ctx.font='700 11px Nunito,sans-serif';
+            if(chartArea.right-bar.x > tw+10){ ctx.fillStyle='#1e2a3a'; ctx.textAlign='left'; ctx.fillText(val,bar.x+7,bar.y); }
+            else{ ctx.fillStyle='white'; ctx.textAlign='right'; ctx.fillText(val,Math.max(bar.x-7,chartArea.left+tw+4),bar.y); }
+          });
+          ctx.restore();
+        }
+      }]
+    });
+    return()=>inst.current?.destroy();
+  },[data,color]);
+  if(!data.length) return<div style={{padding:24,textAlign:'center',color:'#9ca3af',fontSize:13}}>Sin datos para el período</div>;
+  return<div style={{height:(height||Math.max(data.length*30+24,100))+'px'}}><canvas ref={ref}/></div>;
+}
+
+/* ════ CHART: Barras comparativo anual ════ */
+function ChartComparativo({dataA,dataC,yA,yC,color}){
+  const ref=useRef(null); const inst=useRef(null);
+  useEffect(()=>{
+    if(!ref.current) return;
+    if(inst.current) inst.current.destroy();
+    const colorLight=shade(color,40);
+    const maxVal=Math.max(...dataA,...dataC,1);
+    inst.current=new Chart(ref.current.getContext('2d'),{
+      type:'bar',
+      data:{
+        labels:MESES_C,
+        datasets:[
+          {label:String(yA), data:dataA, backgroundColor:colorLight+'cc', borderRadius:4, borderSkipped:false, barPercentage:0.45, categoryPercentage:0.7},
+          {label:String(yC), data:dataC, backgroundColor:color,            borderRadius:4, borderSkipped:false, barPercentage:0.45, categoryPercentage:0.7},
+        ]
+      },
+      options:{
+        responsive:true, maintainAspectRatio:false, devicePixelRatio:2,
+        layout:{padding:{top:38, bottom:6, left:8, right:8}},
+        plugins:{
+          legend:{display:true, position:'top', align:'end',
+            labels:{font:{size:12,weight:'700'}, color:'#374151', boxWidth:12, usePointStyle:true, pointStyle:'circle', padding:14}
+          },
+          tooltip:{callbacks:{label:ctx=>ctx.dataset.label+': '+fmt(ctx.parsed.y)}, bodyFont:{size:12}, padding:8},
+        },
+        scales:{
+          x:{ticks:{font:{size:12,weight:'700'}, color:'#374151'}, grid:{display:false}, border:{display:false}},
+          y:{display:false, beginAtZero:true, suggestedMax:maxVal*1.38}
+        }
+      },
+      plugins:[{
+        id:'topLabels',
+        afterDatasetsDraw(chart){
+          const{ctx,data:d,chartArea}=chart;
+          ctx.save(); ctx.textAlign='center'; ctx.textBaseline='bottom';
+          d.datasets.forEach((ds,di)=>{
+            chart.getDatasetMeta(di).data.forEach((bar,i)=>{
+              const val=ds.data[i]; if(!val) return;
+              ctx.font=`700 ${di===0?'10':'11'}px Nunito,sans-serif`;
+              ctx.fillStyle=di===0?shade(color,20):shade(color,-20);
+              const yo=di===0?16:6;
+              const xo=di===0?-5:5;
+              ctx.fillText(fmtM(val), bar.x+xo, Math.max(chartArea.top+8, bar.y-yo));
+            });
+          });
+          ctx.restore();
+        }
+      }]
+    });
+    return()=>inst.current?.destroy();
+  },[dataA,dataC,color]);
+  return<div style={{height:260}}><canvas ref={ref}/></div>;
+}
+
+/* ════ APP ════ */
+function App(){
+  const[facturas,     setFacturas]     = useState([]);
+  const[doctors,      setDoctors]      = useState([]);
+  const[doctorStyles, setDoctorStyles] = useState({});
+  const[filtAnio,  setFiltAnio]  = useState('');
+  const[filtMes,   setFiltMes]   = useState('');
+  const[filtDoctor,setFiltDoctor]= useState('');
+  const[color,     setColor]     = useState('#1a3a6b');
+  const[logoURL,   setLogoURL]   = useState('');
+  const[title,     setTitle]     = useState('Back Office Empresarial');
+  const[subtitle,  setSubtitle]  = useState('Informe de Facturación Médica');
+  const[editTitle, setEditTitle] = useState(false);
+  const[editCard3, setEditCard3] = useState(false);
+  const[card3, setCard3] = useState({url:'www.suaporte.com.co',enlaceLabel:'enlace',usuario:'',clave:''});
+  const[saving, setSaving] = useState(false);
+
+  useEffect(()=>{
+    const h=e=>{
+      if(e.data?.type==='FACTURAS_UPDATE'){ setFacturas(e.data.facturas||[]); if(e.data.doctors?.length) setDoctors(e.data.doctors); }
+      if(e.data?.type==='DOCTORS_UPDATE'){ if(e.data.doctors?.length) setDoctors(e.data.doctors); }
+      if(e.data?.type==='DOCTOR_STYLES'){ setDoctorStyles(e.data.styles||{}); }
+    };
+    window.addEventListener('message',h);
+    window.parent.postMessage({type:'IFRAME_READY'},'*');
+    return()=>window.removeEventListener('message',h);
+  },[]);
+
+  useEffect(()=>{
+    const resize=()=>setTimeout(()=>{ try{ Object.values(window.Chart?.instances||{}).forEach(c=>c?.resize?.()); }catch(e){} },250);
+    window.addEventListener('beforeprint',resize);
+    window.addEventListener('afterprint',resize);
+    return()=>{ window.removeEventListener('beforeprint',resize); window.removeEventListener('afterprint',resize); };
+  },[]);
+
+  /* Aplicar estilo doctor */
+  useEffect(()=>{
+    const D={color:'#1a3a6b',logoBase64:'',title:'Back Office Empresarial',subtitle:'Informe de Facturación Médica',card3:{url:'www.suaporte.com.co',enlaceLabel:'enlace',usuario:'',clave:''}};
+    if(filtDoctor && doctorStyles[filtDoctor]){
+      const s=doctorStyles[filtDoctor];
+      setColor(s.color||D.color); setLogoURL(s.logoBase64||'');
+      setTitle(s.title||D.title); setSubtitle(s.subtitle||D.subtitle);
+      setCard3({url:s.card3?.url??D.card3.url, enlaceLabel:s.card3?.enlaceLabel??'enlace', usuario:s.card3?.usuario??'', clave:s.card3?.clave??''});
+    } else if(!filtDoctor){ setColor(D.color); setLogoURL(''); setTitle(D.title); setSubtitle(D.subtitle); setCard3(D.card3); }
+  },[filtDoctor,doctorStyles]);
+
+  const guardarEstiloDoctor=async()=>{
+    if(!filtDoctor){showToast('Selecciona un doctor primero.','err');return;}
+    setSaving(true);
+    const card3ToSave={url:card3.url||'',enlaceLabel:card3.enlaceLabel||'enlace',usuario:card3.usuario||'',clave:card3.clave||''};
+    window.parent.postMessage({type:'SAVE_DOCTOR_STYLE',doctorId:filtDoctor,style:{color,logoBase64:logoURL,title,subtitle,card3:card3ToSave}},'*');
+    setTimeout(()=>{ setSaving(false); showToast(`✅ Perfil guardado.`,'ok'); },800);
+  };
+
+  /* ── Calcular datos ── */
+  const filtered=facturas.filter(f=>(!filtAnio||String(f.anio)===filtAnio)&&(!filtMes||f.mes===filtMes)&&(!filtDoctor||f.doctorId===filtDoctor));
+  const totalFilt=filtered.reduce((s,f)=>s+(Number(f.valor)||0),0);
+  const ibc=Math.round(totalFilt*0.40);
+  const idx=MESES.indexOf(filtMes);
+  const mesAnt=filtMes?(idx>0?MESES[idx-1]:MESES[11]):'';
+  const añoAnt=filtMes?(idx>0?filtAnio:String(Number(filtAnio)-1)):filtAnio;
+  const totalAnt=filtMes?facturas.filter(f=>f.mes===mesAnt&&(!filtAnio||String(f.anio)===añoAnt)&&(!filtDoctor||f.doctorId===filtDoctor)).reduce((s,f)=>s+(Number(f.valor)||0),0):0;
+  const diff=totalFilt-totalAnt; const pct=(filtMes&&totalAnt)?(diff/totalAnt)*100:null;
+  const arrow=diff>0?'▲':diff<0?'▼':'→'; const arrowClr=diff>0?'#16a34a':diff<0?'#dc2626':'#6b7280';
+  const curYear=new Date().getFullYear();
+  const sumaMes=yr=>MESES.map(mes=>facturas.filter(f=>Number(f.anio)===yr&&f.mes===mes&&(!filtDoctor||f.doctorId===filtDoctor)).reduce((s,f)=>s+(Number(f.valor)||0),0));
+  const entMap={}; filtered.forEach(f=>{const k=f.entidad||'Sin entidad'; entMap[k]=(entMap[k]||0)+(Number(f.valor)||0);});
+  const entData=Object.entries(entMap).sort((a,b)=>b[1]-a[1]).map(([l,v])=>({l,v}));
+  const años=[...new Set(facturas.map(f=>f.anio))].filter(Boolean).sort().reverse();
+  const mesLbl=filtMes?MESES_CAP[MESES.indexOf(filtMes)]:'';
+  const docLbl=filtDoctor?doctors.find(d=>d.id===filtDoctor)?.nombre||'':'';
+  const hasDocStyle=filtDoctor&&doctorStyles[filtDoctor];
+
+  /* Helpers estilo */
+  const hdr={background:`linear-gradient(135deg,${color} 0%,${shade(color,-28)} 100%)`};
+  const inpS={border:'1.5px solid #dde1e7',borderRadius:6,padding:'5px 9px',fontSize:12,outline:'none',fontFamily:'Nunito,sans-serif',color:'#1e2a3a',background:'white'};
+  const selS={...inpS,cursor:'pointer'};
+  const rowB={display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:5};
+
+  const entHeight=Math.max(entData.length*30+24,100);
+
+  return(
+    <div style={{padding:14,background:'#eef1f6',minHeight:'100vh'}}>
+
+      {/* ════ TOOLBAR no-print ════ */}
+      <div className="no-print" style={{background:'white',borderRadius:12,border:'1px solid #dde1e7',padding:'10px 16px',display:'flex',alignItems:'flex-end',gap:10,flexWrap:'wrap',marginBottom:12,boxShadow:'0 2px 8px rgba(11,31,58,.06)'}}>
+        <div style={{display:'flex',gap:10,flex:1,flexWrap:'wrap'}}>
+          {[
+            {lbl:'Año',    val:filtAnio,   set:setFiltAnio,   opts:[{v:'',l:'Todos'},...años.map(a=>({v:String(a),l:String(a)}))]},
+            {lbl:'Mes',    val:filtMes,    set:setFiltMes,    opts:[{v:'',l:'Todos'},...MESES.map((m,i)=>({v:m,l:MESES_CAP[i]}))]},
+            {lbl:'Doctor', val:filtDoctor, set:setFiltDoctor, opts:[{v:'',l:'Todos'},...doctors.map(d=>({v:d.id,l:d.nombre+(doctorStyles[d.id]?'  🎨':'')}))]},
+          ].map(f=>(
+            <div key={f.lbl} style={{display:'flex',flexDirection:'column',gap:3}}>
+              <label style={{fontSize:10,fontWeight:800,color:'#8d9ab0',textTransform:'uppercase',letterSpacing:'.06em'}}>{f.lbl}</label>
+              <select value={f.val} onChange={e=>f.set(e.target.value)} style={{...selS,minWidth:100}}>
+                {f.opts.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
+              </select>
+            </div>
+          ))}
+        </div>
+        <div style={{display:'flex',gap:8,alignItems:'flex-end',flexWrap:'wrap'}}>
+          <div style={{display:'flex',flexDirection:'column',gap:3}}>
+            <label style={{fontSize:10,fontWeight:800,color:'#8d9ab0',textTransform:'uppercase',letterSpacing:'.06em'}}>Color</label>
+            <input type="color" value={color} onChange={e=>setColor(e.target.value)} style={{width:36,height:36,borderRadius:'50%',border:'2px solid #dde1e7',cursor:'pointer',padding:2}}/>
+          </div>
+          <div style={{display:'flex',flexDirection:'column',gap:3}}>
+            <label style={{fontSize:10,fontWeight:800,color:'#8d9ab0',textTransform:'uppercase',letterSpacing:'.06em'}}>Logo</label>
+            <label style={{...selS,display:'inline-flex',alignItems:'center',gap:5,height:36,padding:'0 12px'}}>
+              {logoURL?<img src={logoURL} style={{height:20,width:'auto',maxWidth:60,objectFit:'contain'}} alt="logo"/>:<><i className="fa-solid fa-image"/><span>Logo</span></>}
+              <input type="file" accept="image/*" style={{display:'none'}} onChange={e=>{const f=e.target.files[0];if(f){const r=new FileReader();r.onload=ev=>setLogoURL(ev.target.result);r.readAsDataURL(f);}}}/>
+            </label>
+          </div>
+          {logoURL&&<button onClick={()=>setLogoURL('')} style={{background:'#fdecea',color:'#c0392b',border:'none',borderRadius:7,padding:'0 10px',cursor:'pointer',fontSize:12,fontWeight:700,height:36,alignSelf:'flex-end'}}>✕</button>}
+          <button onClick={guardarEstiloDoctor} disabled={!filtDoctor||saving}
+            style={{background:filtDoctor?`linear-gradient(135deg,${color},${shade(color,-20)})`:'#e5e7eb',color:filtDoctor?'white':'#9ca3af',border:'none',borderRadius:7,padding:'0 14px',fontFamily:'Nunito,sans-serif',fontSize:12.5,fontWeight:700,cursor:filtDoctor?'pointer':'not-allowed',display:'flex',alignItems:'center',gap:5,height:36,alignSelf:'flex-end',transition:'all .2s'}}>
+            {saving?<><i className="fa-solid fa-spinner fa-spin"/>Guardando…</>:<><i className="fa-solid fa-floppy-disk"/>{hasDocStyle?'Actualizar':'Guardar estilo'}</>}
+          </button>
+          <button onClick={()=>window.print()}
+            style={{background:'linear-gradient(135deg,#1565c0,#0d47a1)',color:'white',border:'none',borderRadius:7,padding:'0 16px',fontFamily:'Nunito,sans-serif',fontSize:13,fontWeight:700,cursor:'pointer',display:'flex',alignItems:'center',gap:6,height:36,alignSelf:'flex-end',boxShadow:'0 3px 10px rgba(21,101,192,.3)'}}>
+            <i className="fa-solid fa-print"/> Imprimir / PDF
+          </button>
+        </div>
+      </div>
+
+      {hasDocStyle&&(
+        <div className="no-print" style={{background:'#e8f5e9',border:'1px solid #a5d6a7',borderRadius:8,padding:'7px 14px',marginBottom:10,fontSize:12,color:'#2e7d32',display:'flex',alignItems:'center',gap:7}}>
+          <i className="fa-solid fa-circle-check"/>
+          <span><strong>{docLbl}</strong> — perfil cargado automáticamente.</span>
+        </div>
+      )}
+
+      {/* ════ DOCUMENTO IMPRIMIBLE ════ */}
+      <div className="report-doc" style={{background:'white',borderRadius:12,overflow:'hidden',boxShadow:'0 4px 24px rgba(11,31,58,.12)',maxWidth:'100%'}}>
+
+        {/* ENCABEZADO premium */}
+        <div style={{...hdr,padding:'12px 18px',display:'grid',gridTemplateColumns:'auto 1fr auto',alignItems:'center',gap:18}}>
+          {/* Logo */}
+          <div style={{width:60,height:60,borderRadius:12,background:'rgba(255,255,255,.15)',display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden',flexShrink:0,boxShadow:'0 2px 8px rgba(0,0,0,.15)'}}>
+            {logoURL?<img src={logoURL} style={{width:'100%',height:'100%',objectFit:'contain'}} alt="logo"/>:<i className="fa-solid fa-briefcase-medical" style={{fontSize:26,color:'white'}}/>}
+          </div>
+          {/* Título */}
+          <div style={{textAlign:'center'}}>
+            {editTitle?(
+              <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:5}}>
+                <input value={title} onChange={e=>setTitle(e.target.value)} autoFocus style={{textAlign:'center',fontFamily:'Syne,sans-serif',fontSize:16,fontWeight:800,color:'#1e2a3a',border:'none',borderRadius:5,padding:'3px 12px',outline:'none',width:300}}/>
+                <input value={subtitle} onChange={e=>setSubtitle(e.target.value)} style={{textAlign:'center',fontSize:12,color:'#1e2a3a',border:'none',borderRadius:5,padding:'3px 12px',outline:'none',width:260}}/>
+                <button onClick={()=>setEditTitle(false)} style={{background:'rgba(255,255,255,.25)',border:'none',color:'white',borderRadius:6,padding:'4px 12px',cursor:'pointer',fontSize:11.5,fontWeight:700}}>✓ Guardar</button>
+              </div>
+            ):(
+              <>
+                <div style={{fontFamily:'Syne,sans-serif',fontSize:20,fontWeight:800,color:'white',letterSpacing:'.01em',textShadow:'0 1px 3px rgba(0,0,0,.2)'}}>{title}</div>
+                <div style={{fontSize:12,color:'rgba(255,255,255,.7)',marginTop:3,letterSpacing:'.02em'}}>{subtitle}{docLbl?' — '+docLbl:''}</div>
+                <span className="no-print" onClick={()=>setEditTitle(true)} style={{fontSize:10,color:'rgba(255,255,255,.45)',cursor:'pointer',marginTop:4,display:'inline-block',border:'1px solid rgba(255,255,255,.25)',borderRadius:4,padding:'1px 8px'}}>✏️ Editar</span>
+              </>
+            )}
+          </div>
+          {/* Filtros en header */}
+          <div style={{display:'flex',gap:14,alignItems:'flex-end'}}>
+            <div>
+              <div style={{fontSize:9.5,fontWeight:800,color:'rgba(255,255,255,.55)',textTransform:'uppercase',letterSpacing:'.08em',marginBottom:4}}>Año</div>
+              <select value={filtAnio} onChange={e=>setFiltAnio(e.target.value)} className="no-print" style={{background:'rgba(255,255,255,.15)',backdropFilter:'blur(4px)',border:'1px solid rgba(255,255,255,.25)',borderRadius:7,padding:'6px 10px',fontSize:12.5,fontWeight:700,color:'white',outline:'none',cursor:'pointer',fontFamily:'Nunito,sans-serif',minWidth:85}}>
+                <option value="" style={{color:'#333',background:'white'}}>Todos</option>
+                {años.map(a=><option key={a} value={String(a)} style={{color:'#333',background:'white'}}>{a}</option>)}
+              </select>
+              <div style={{color:'rgba(255,255,255,.8)',fontWeight:700,fontSize:12.5,marginTop:2}}>{filtAnio||'Todos'}</div>
+            </div>
+            <div>
+              <div style={{fontSize:9.5,fontWeight:800,color:'rgba(255,255,255,.55)',textTransform:'uppercase',letterSpacing:'.08em',marginBottom:4}}>Fecha Corte</div>
+              <select value={filtMes} onChange={e=>setFiltMes(e.target.value)} className="no-print" style={{background:'rgba(255,255,255,.15)',backdropFilter:'blur(4px)',border:'1px solid rgba(255,255,255,.25)',borderRadius:7,padding:'6px 10px',fontSize:12.5,fontWeight:700,color:'white',outline:'none',cursor:'pointer',fontFamily:'Nunito,sans-serif',minWidth:120}}>
+                <option value="" style={{color:'#333',background:'white'}}>Todos los meses</option>
+                {MESES.map((m,i)=><option key={m} value={m} style={{color:'#333',background:'white'}}>{MESES_CAP[i]}</option>)}
+              </select>
+              <div style={{color:'rgba(255,255,255,.8)',fontWeight:700,fontSize:12.5,marginTop:2}}>{mesLbl||'Todos'}</div>
+            </div>
+          </div>
+        </div>
+
+        {/* KPI CARDS */}
+        <div className="kpi-row" style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10,padding:'10px 14px 0',background:'white'}}>
+
+          {/* KPI 1 — Valor */}
+          <div className="kpi-card" style={{borderRadius:10,padding:'13px 15px',background:'white',border:'1px solid #e8ecf4',boxShadow:'0 3px 16px rgba(11,31,58,.08)',position:'relative',overflow:'hidden'}}>
+            <div className="kpi-accent-bar" style={{position:'absolute',top:0,left:0,right:0,height:3,background:`linear-gradient(90deg,${color},${shade(color,20)})`}}/>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:10}}>
+              <div>
+                <div style={{fontSize:10,fontWeight:800,color:'#94a3b8',textTransform:'uppercase',letterSpacing:'.08em',marginBottom:6}}>Valor Mes Actual</div>
+                <div style={{fontSize:22,fontWeight:800,color:'#0f172a',letterSpacing:'-0.5px',lineHeight:1}}>{fmt(totalFilt)}</div>
+              </div>
+              <div style={{width:42,height:42,borderRadius:10,background:`${color}18`,display:'flex',alignItems:'center',justifyContent:'center',fontSize:19}}>💸</div>
+            </div>
+            <div style={{height:1,background:'#f0f4f8',margin:'10px 0'}}/>
+            <div style={{...rowB,marginBottom:4}}><span style={{fontSize:11.5,color:'#64748b',fontWeight:600}}>Mes Anterior</span><span style={{fontSize:12.5,fontWeight:700,color:'#0f172a'}}>{fmt(totalAnt)}</span></div>
+            {pct!==null?(
+              <>
+                <div style={{...rowB,marginBottom:4}}><span style={{fontSize:11.5,color:'#64748b',fontWeight:600}}>Variación %</span><span style={{fontSize:12.5,fontWeight:800,color:arrowClr}}>{arrow} {Math.abs(pct).toFixed(2)}%</span></div>
+                <div style={rowB}><span style={{fontSize:11.5,color:'#64748b',fontWeight:600}}>Diferencia</span><span style={{fontSize:12.5,fontWeight:700,color:arrowClr}}>{arrow} ${''+Math.abs(diff).toLocaleString('es-CO')}</span></div>
+              </>
+            ):(
+              <div style={{fontSize:11,color:'#94a3b8',marginTop:4}}>Selecciona año y mes para ver variación</div>
+            )}
+          </div>
+
+          {/* KPI 2 — IBC */}
+          <div className="kpi-card" style={{borderRadius:10,padding:'13px 15px',background:'white',border:'1px solid #e8ecf4',boxShadow:'0 3px 16px rgba(11,31,58,.08)',position:'relative',overflow:'hidden'}}>
+            <div className="kpi-accent-bar" style={{position:'absolute',top:0,left:0,right:0,height:3,background:'linear-gradient(90deg,#ea580c,#f97316)'}}/>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:10}}>
+              <div>
+                <div style={{fontSize:10,fontWeight:800,color:'#94a3b8',textTransform:'uppercase',letterSpacing:'.08em',marginBottom:6}}>Cálculo IBC Mensual</div>
+                <div style={{fontFamily:'Syne,sans-serif',fontSize:20,fontWeight:800,color:'#0f172a',lineHeight:1.1,marginTop:2}}>
+                  {mesLbl||<span style={{fontSize:14,color:'#94a3b8',fontWeight:500}}>Selecciona un mes</span>}
+                </div>
+              </div>
+              <div style={{width:42,height:42,borderRadius:10,background:'#fff7ed',display:'flex',alignItems:'center',justifyContent:'center',fontSize:19}}>🧮</div>
+            </div>
+            <div style={{height:1,background:'#f0f4f8',margin:'10px 0'}}/>
+            <div style={{...rowB,marginBottom:4}}><span style={{fontSize:11.5,color:'#64748b',fontWeight:600}}>Vr. Facturado</span><span style={{fontSize:12.5,fontWeight:700,color:'#0f172a'}}>{fmt(totalFilt)}</span></div>
+            <div style={rowB}><span style={{fontSize:11.5,color:'#64748b',fontWeight:600}}>IBC (40%)</span><span style={{fontSize:14,fontWeight:800,color:'#1565c0'}}>{fmt(ibc)}</span></div>
+          </div>
+
+          {/* KPI 3 — Editable */}
+          <div className="kpi-card" style={{borderRadius:10,padding:'13px 15px',background:'white',border:'1px solid #e8ecf4',boxShadow:'0 3px 16px rgba(11,31,58,.08)',position:'relative',overflow:'hidden'}}>
+            <div className="kpi-accent-bar" style={{position:'absolute',top:0,left:0,right:0,height:3,background:'linear-gradient(90deg,#1565c0,#1e88e5)'}}/>
+            <button className="no-print" onClick={()=>setEditCard3(e=>!e)} style={{position:'absolute',top:10,right:10,background:editCard3?color:'#f1f5f9',color:editCard3?'white':'#94a3b8',border:'none',borderRadius:6,width:26,height:26,cursor:'pointer',fontSize:11,display:'flex',alignItems:'center',justifyContent:'center'}}>
+              {editCard3?'✓':'✏️'}
+            </button>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8,paddingRight:30}}>
+              {editCard3?<input style={{...inpS,flex:1,marginRight:6,fontSize:12}} value={card3.url} onChange={e=>setCard3(d=>({...d,url:e.target.value}))} placeholder="www.ejemplo.com"/>
+                :<a href={card3.url&&!card3.url.startsWith('http')?'https://'+card3.url:card3.url} target="_blank" rel="noreferrer" style={{color:'#1565c0',fontWeight:700,fontSize:13,textDecoration:'none'}}>{card3.url||'www.ejemplo.com'}</a>}
+              {editCard3?<input style={{...inpS,width:60,textAlign:'right',fontSize:12}} value={card3.enlaceLabel} onChange={e=>setCard3(d=>({...d,enlaceLabel:e.target.value}))} placeholder="enlace"/>
+                :<span style={{fontSize:12.5,color:'#1565c0',fontWeight:700,whiteSpace:'nowrap'}}>{card3.enlaceLabel||'enlace'} ↗</span>}
+            </div>
+            <div style={{height:1,background:'#f0f4f8',margin:'8px 0'}}/>
+            <div style={{...rowB,marginBottom:5}}>
+              <span style={{fontSize:11.5,color:'#64748b',fontWeight:600}}>Usuario</span>
+              {editCard3?<input style={{...inpS,flex:1,marginLeft:8,fontSize:12}} value={card3.usuario} onChange={e=>setCard3(d=>({...d,usuario:e.target.value}))} placeholder="Usuario"/>:<span style={{fontSize:12.5,fontWeight:700,color:'#0f172a'}}>{card3.usuario||'—'}</span>}
+            </div>
+            <div style={rowB}>
+              <span style={{fontSize:11.5,color:'#64748b',fontWeight:600}}>Clave</span>
+              {editCard3?<input style={{...inpS,flex:1,marginLeft:8,fontSize:12}} value={card3.clave} onChange={e=>setCard3(d=>({...d,clave:e.target.value}))} placeholder="Clave"/>:<span style={{fontSize:12.5,fontWeight:700,color:'#0f172a'}}>{card3.clave||'—'}</span>}
+            </div>
+          </div>
+        </div>
+
+        {/* GRÁFICAS — apiladas, ancho completo */}
+        <div className="charts-row" style={{display:'flex',flexDirection:'column',gap:10,padding:'10px 16px 14px',background:'white'}}>
+
+          {/* Gráfica 1 — Entidades */}
+          <div className="chart-panel" style={{borderRadius:10,overflow:'hidden',border:'1px solid #e8ecf4',boxShadow:'0 2px 12px rgba(11,31,58,.07)'}}>
+            <div className="chart-panel-head" style={{...hdr,padding:'10px 16px',display:'flex',alignItems:'center',gap:8,color:'white',fontSize:11.5,fontWeight:800,letterSpacing:'.06em',textTransform:'uppercase'}}>
+              <i className="fa-solid fa-dollar-sign" style={{fontSize:13,opacity:.8}}/> 
+              Valor Facturado por Entidad{mesLbl?': '+mesLbl:''}
+            </div>
+            <div style={{padding:'8px 12px',background:'white'}}>
+              <ChartEntidad data={entData} color={color} height={Math.max(entData.length*28+20,100)}/>
+            </div>
+          </div>
+
+          {/* Gráfica 2 — Comparativo */}
+          <div className="chart-panel" style={{borderRadius:10,overflow:'hidden',border:'1px solid #e8ecf4',boxShadow:'0 2px 12px rgba(11,31,58,.07)'}}>
+            <div className="chart-panel-head" style={{...hdr,padding:'10px 16px',display:'flex',alignItems:'center',gap:8,color:'white',fontSize:11.5,fontWeight:800,letterSpacing:'.06em',textTransform:'uppercase'}}>
+              <i className="fa-solid fa-chart-column" style={{fontSize:13,opacity:.8}}/>
+              Comparativo Anual {curYear-1} vs {curYear}
+            </div>
+            <div style={{padding:'8px 12px',background:'white'}}>
+              <ChartComparativo dataA={sumaMes(curYear-1)} dataC={sumaMes(curYear)} yA={curYear-1} yC={curYear} color={color}/>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  );
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>

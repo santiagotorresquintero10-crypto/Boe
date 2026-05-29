@@ -1,0 +1,48 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAuth() { return request.auth != null; }
+
+    match /doctors/{id}   { allow read, write: if isAuth(); }
+    match /formatos/{id}  { allow read, write: if isAuth(); }
+    match /groups/{id}    { allow read, write: if isAuth(); }
+    match /facturas/{id}  { allow read, write: if isAuth(); }
+    match /doctorStyles/{id} { allow read, write: if isAuth(); }
+    match /egresos/{id}       { allow read, write: if isAuth(); }
+    match /tablasEgreso/{id}  { allow read, write: if isAuth(); }
+    match /turnos/{id}        { allow read, write: if isAuth(); }
+
+    match /users/{id} {
+      allow read: if isAuth();
+      allow create, update: if isAuth() && request.auth.uid == id;
+      allow delete: if false;
+    }
+
+    match /tareas/{id} {
+      allow create: if isAuth();
+      allow read, update, delete: if isAuth() && (
+        resource.data.createdBy == request.auth.uid ||
+        resource.data.asignadoId == request.auth.uid
+      );
+    }
+
+    // Notificaciones: cualquier usuario autenticado puede crear
+    // Solo el destinatario puede leer y actualizar las suyas
+    match /notificaciones/{id} {
+      allow create: if isAuth();
+      allow read, update, delete: if isAuth() &&
+        resource.data.toUid == request.auth.uid;
+    }
+
+    // Canales fijos de chat
+    match /chat_general/{m}     { allow read, write: if isAuth(); }
+    match /chat_facturacion/{m} { allow read, write: if isAuth(); }
+    match /chat_radicacion/{m}  { allow read, write: if isAuth(); }
+    match /chat_glosas/{m}      { allow read, write: if isAuth(); }
+    match /chat_avisos/{m}      { allow read, write: if isAuth(); }
+
+    // Todo lo demás (grupos chat, groupMessages_, etc)
+    match /{col}/{id} { allow read, write: if isAuth(); }
+  }
+}
