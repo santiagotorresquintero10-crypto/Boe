@@ -3692,11 +3692,12 @@ window.openTablaRowModal = (tablaId, idx) => {
   const selNombre = document.getElementById('trNombre');
   const especialistas = [...new Set(doctors.filter(d=>d.especialista).map(d=>d.especialista))].sort();
   const savedNombre = f?.nombre||'';
+  // Build options with 'selected' attribute directly on the matching option
   selNombre.innerHTML = '<option value="">— Seleccionar especialista —</option>'
-    + especialistas.map(e=>`<option value="${escHtml(e)}">${escHtml(e)}</option>`).join('')
+    + especialistas.map(e=>`<option value="${escHtml(e)}" ${e===savedNombre?'selected':''}>${escHtml(e)}</option>`).join('')
     + (savedNombre && !especialistas.includes(savedNombre)
-        ? `<option value="${escHtml(savedNombre)}">${escHtml(savedNombre)}</option>` : '');
-  // Set value explicitly AFTER options are in DOM
+        ? `<option value="${escHtml(savedNombre)}" selected>${escHtml(savedNombre)}</option>` : '');
+  // Force value after DOM update
   selNombre.value = savedNombre;
 
   document.getElementById('trValorFactura').value= f?.valorFactura||'';
