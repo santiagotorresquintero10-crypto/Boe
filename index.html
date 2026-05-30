@@ -1020,7 +1020,11 @@
           </div>
         </div>
         <div class="fg"><label>Mes</label><input type="month" id="trMes"/></div>
-        <div class="fg"><label>Nombre Especialista</label><input type="text" id="trNombre" placeholder="Dr. Juan Pérez"/></div>
+        <div class="fg"><label>Nombre Especialista</label>
+          <select id="trNombre" style="border:1.5px solid var(--gray-1);border-radius:7px;padding:6px 10px;font-size:12.5px;outline:none;font-family:'Nunito',sans-serif;cursor:pointer;background:white;color:var(--navy);width:100%">
+            <option value="">— Seleccionar especialista —</option>
+          </select>
+        </div>
         <div class="fg"><label>Valor Factura</label><input type="number" id="trValorFactura" placeholder="0" oninput="calcValorPagar()"/></div>
         <div class="fg"><label>Abono</label><input type="number" id="trAbono" placeholder="0" oninput="calcValorPagar()"/></div>
         <div class="fg"><label>Glosa</label><input type="number" id="trGlosa" placeholder="0" oninput="calcValorPagar()"/></div>
