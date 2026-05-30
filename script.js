@@ -3588,7 +3588,9 @@ function renderCustomTables() {
       : allFilas;
     const totalPagar = filas.reduce((s,f)=>s+(Number(f.valorPagar)||0),0);
 
-    const rows = filas.map((f,i)=>`
+    const rows = filas.map((f)=>{
+      const realIdx = allFilas.indexOf(f); // real index regardless of filter
+      return `
       <tr>
         <td>${escHtml(f.factura||'—')}</td>
         <td>${f.mes||'—'}</td>
@@ -3605,11 +3607,12 @@ function renderCustomTables() {
         <td class="col-pagar-val ${Number(f.valorPagar)<0?'neg':''}">${fmtCOP(f.valorPagar)}</td>
         <td>
           <div class="tbl-actions">
-            <button class="act-btn edit" onclick="openTablaRowModal('${t.id}',${i})"><i class="fa-solid fa-pen"></i></button>
-            <button class="act-btn del" onclick="deleteTablaRow('${t.id}',${i})"><i class="fa-solid fa-trash"></i></button>
+            <button class="act-btn edit" onclick="openTablaRowModal('${t.id}',${realIdx})"><i class="fa-solid fa-pen"></i></button>
+            <button class="act-btn del" onclick="deleteTablaRow('${t.id}',${realIdx})"><i class="fa-solid fa-trash"></i></button>
           </div>
         </td>
-      </tr>`).join('');
+      </tr>`;
+    }).join('');
 
     return `<div class="egr-custom-card">
       <div class="egr-custom-head">
