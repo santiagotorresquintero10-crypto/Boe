@@ -3619,7 +3619,7 @@ window.onIdentChange = async (tablaId, selectEl) => {
       filas: filasActualizadas,
       updatedAt: serverTimestamp()
     });
-    toast(`✅ ${nuevas.length} fila${nuevas.length>1?'s':'} creada${nuevas.length>1?'s':''} automáticamente.`, 'success');
+    toast(`${nuevas.length} fila${nuevas.length>1?'s':''} creada${nuevas.length>1?'s':''} automáticamente.`, 'success');
   } catch(e) {
     toast('Error al autocargar filas: '+e.message, 'error');
   }
@@ -4991,4 +4991,3 @@ window.exportarTablaExcel = (tablaId) => {
   XLSX.writeFile(wb, fileName);
   toast(`✅ Exportado: ${fileName}`,'success');
 };
-
