@@ -3557,14 +3557,72 @@ window.toggleTablaCheck = (tablaId, field, val) => {
 };
 
 /* ── Identificador: cambiar filtro de factura madre ── */
-window.onIdentChange = (tablaId, selectEl) => {
+window.onIdentChange = async (tablaId, selectEl) => {
   const idx = tablasEgreso.findIndex(t=>t.id===tablaId);
   if (idx===-1) return;
   const selectedIds = [...selectEl.selectedOptions].map(o=>o.value).filter(Boolean);
   tablasEgreso[idx]._selectedIdents = selectedIds;
-  // Keep backward compat
   tablasEgreso[idx]._selectedIdent  = selectedIds[0]||'';
   renderCustomTables();
+
+  // ── Autocarga de facturas hijas desde los egresos seleccionados ──
+  if (!selectedIds.length) return;
+  const tabla = tablasEgreso[idx];
+  const filasActuales = tabla.filas||[];
+
+  // Factura numbers already existing for each identId
+  const existentes = new Set(
+    filasActuales
+      .filter(f => selectedIds.includes(f.identId))
+      .map(f => (f.factura||'').trim().toLowerCase())
+  );
+
+  // Build new filas from hijas of each selected egreso
+  const nuevas = [];
+  selectedIds.forEach(egresoId => {
+    const egreso = egresos.find(e=>e.id===egresoId);
+    if (!egreso) return;
+    (egreso.hijas||[]).forEach(h => {
+      const factKey = (h.factura||'').trim().toLowerCase();
+      if (!factKey || existentes.has(factKey)) return; // skip duplicates
+      existentes.add(factKey); // prevent duplicates within this batch
+
+      const valorFactura = Number(h.valorEspecialista)||0;
+      // Use same formula as calcValorPagar: base = valorFactura (no abono)
+      const valorPagar = valorFactura;
+
+      nuevas.push({
+        identId:      egresoId,
+        identIds:     [egresoId],
+        factura:      h.factura||'',
+        mes:          h.honorarioMes||egreso.honorarioMes||'',
+        nombre:       h.nombre||egreso.nombre||'',
+        valorFactura,
+        abono:        0,
+        glosa:        0,
+        reteFuente:   0,
+        afc:          0,
+        residentes:   0,
+        tiquetes:     0,
+        hotel:        0,
+        transporte:   0,
+        valorPagar,
+      });
+    });
+  });
+
+  if (!nuevas.length) return;
+
+  try {
+    const filasActualizadas = [...filasActuales, ...nuevas];
+    await updateDoc(doc(db,'tablasEgreso',tablaId), {
+      filas: filasActualizadas,
+      updatedAt: serverTimestamp()
+    });
+    toast(`✅ ${nuevas.length} fila${nuevas.length>1?'s':'} creada${nuevas.length>1?'s':''} automáticamente.`, 'success');
+  } catch(e) {
+    toast('Error al autocargar filas: '+e.message, 'error');
+  }
 };
 
 window.deleteTabla = async (id) => {
@@ -4933,3 +4991,4 @@ window.exportarTablaExcel = (tablaId) => {
   XLSX.writeFile(wb, fileName);
   toast(`✅ Exportado: ${fileName}`,'success');
 };
+
