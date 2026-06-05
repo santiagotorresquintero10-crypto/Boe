@@ -5188,13 +5188,22 @@ window.chkLoadMes = async () => {
     if (!snap.exists()) return;
     const d = snap.data();
     const data = d.especialistas||{};
-    chkRender(data);
+    // Remove any entries with invalid/empty keys silently
+    const cleaned = {};
+    Object.entries(data).forEach(([k,v]) => {
+      if (k && !k.includes('..') && !k.startsWith('.') && !k.endsWith('.')) {
+        cleaned[k] = v;
+      }
+    });
+    chkRender(cleaned);
   });
 };
 
 /* ── Render ── */
 function chkRender(data) {
-  const rows_data = Object.values(data).sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''));
+  // Use actual Firestore keys (Object.entries gives us the real key)
+  const entries = Object.entries(data).sort((a,b)=>(a[1].nombre||'').localeCompare(b[1].nombre||''));
+  const rows_data = entries.map(([key, row]) => ({...row, _key: key}));
   const total     = rows_data.length;
   const enviados  = rows_data.filter(r=>r.envios).length;
   const pendientes= total - enviados;
@@ -5246,7 +5255,10 @@ function chkRender(data) {
   }
 
   tbody.innerHTML = rows_data.map(row => {
-    const k = chkKey(row.nombre||'');
+    // Use the actual Firestore key, sanitize for safe inline onclick use
+    const k = row._key || chkKey(row.nombre||'');
+    // Validate key is safe for Firestore path (no empty, no leading/trailing dots)
+    if (!k || k.includes('..') || k.startsWith('.') || k.endsWith('.')) return '';
     const rowAllDone = CHK_COLS.every(c=>row[c]);
     const checks = CHK_COLS.map(col => {
       const checked = !!row[col];
