@@ -5089,57 +5089,76 @@ window.chkNuevoMes = async () => {
 };
 
 /* ── Agregar especialista — dropdown de clientes ── */
-window.chkAgregarEsp = () => {
-  // Build options from doctors not yet in checklist
-  const snap_ref = doc(db,'checklistMensual',chkMesActual);
-  getDoc(snap_ref).then(snap => {
-    const data = snap.exists() ? (snap.data().especialistas||{}) : {};
-    const disponibles = doctors
-      .filter(d=>d.nombre)
-      .map(d=>d.nombre)
-      .filter(e=>!data[chkKey(e)])
-      .sort();
+window.chkAgregarEsp = async () => {
+  // Fetch ALL doctors directly — no orderBy to avoid excluding docs without createdAt
+  let freshDoctors = [];
+  try {
+    const snap = await getDocs(collection(db,'doctors'));
+    freshDoctors = snap.docs.map(d=>({id:d.id,...d.data()}));
+    doctors = freshDoctors;
+  } catch(e) {
+    freshDoctors = doctors; // fallback to cached
+  }
 
-    if (!disponibles.length) { toast('Todos los especialistas ya están en el checklist.','warn'); return; }
+  // Get current checklist — which client IDs are already added
+  let currentData = {};
+  try {
+    const chkSnap = await getDoc(doc(db,'checklistMensual',chkMesActual));
+    if (chkSnap.exists()) currentData = chkSnap.data().especialistas||{};
+  } catch(e) { /* use empty */ }
 
-    // Show a modal-like select via a floating div
-    const existing = document.getElementById('chkAddDropdown');
-    if (existing) existing.remove();
+  // All clients with Nombre Empresa, excluding already added (by doctor id)
+  const yaAgregados = new Set(Object.values(currentData).map(r=>r.doctorId).filter(Boolean));
 
-    const div = document.createElement('div');
-    div.id = 'chkAddDropdown';
-    div.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:white;border-radius:12px;box-shadow:0 8px 32px rgba(11,31,58,.22);z-index:3000;padding:20px;min-width:320px;max-width:420px';
-    div.innerHTML = `
-      <div style="font-family:'Syne',sans-serif;font-size:15px;font-weight:700;color:var(--navy);margin-bottom:12px">
-        <i class="fa-solid fa-user-plus" style="color:var(--blue);margin-right:6px"></i>Agregar Especialista
-      </div>
-      <select id="chkEspDropdown" style="width:100%;border:1.5px solid var(--gray-2);border-radius:8px;padding:9px 12px;font-size:13px;font-family:'Nunito',sans-serif;outline:none;color:var(--navy);margin-bottom:14px">
-        <option value="">— Seleccionar especialista —</option>
-        ${disponibles.map(e=>`<option value="${escHtml(e)}">${escHtml(e)}</option>`).join('')}
-      </select>
-      <div style="display:flex;gap:8px;justify-content:flex-end">
-        <button onclick="document.getElementById('chkAddDropdown').remove()"
-          style="padding:8px 16px;border-radius:7px;border:1.5px solid var(--gray-2);background:var(--gray-0);font-family:'Nunito',sans-serif;font-size:13px;font-weight:700;cursor:pointer;color:var(--gray-4)">
-          Cancelar
-        </button>
-        <button onclick="chkConfirmarAgregar()"
-          style="padding:8px 16px;border-radius:7px;border:none;background:linear-gradient(135deg,var(--blue),#0e4a9e);color:white;font-family:'Nunito',sans-serif;font-size:13px;font-weight:700;cursor:pointer">
-          <i class="fa-solid fa-plus"></i> Agregar
-        </button>
-      </div>`;
-    document.body.appendChild(div);
-  });
+  const disponibles = freshDoctors
+    .filter(d => d.nombre && d.nombre.trim())
+    .filter(d => !yaAgregados.has(d.id))
+    .sort((a,b) => (a.nombre||'').localeCompare(b.nombre||''));
+
+  if (!disponibles.length) {
+    toast('Todos los clientes ya están en el checklist.','warn');
+    return;
+  }
+
+  document.getElementById('chkAddDropdown')?.remove();
+
+  const div = document.createElement('div');
+  div.id = 'chkAddDropdown';
+  div.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:white;border-radius:12px;box-shadow:0 8px 32px rgba(11,31,58,.22);z-index:3000;padding:20px;min-width:340px;max-width:460px;width:90vw';
+  div.innerHTML = `
+    <div style="font-family:'Syne',sans-serif;font-size:15px;font-weight:700;color:var(--navy);margin-bottom:8px">
+      <i class="fa-solid fa-user-plus" style="color:var(--blue);margin-right:6px"></i>Agregar Cliente al Checklist
+    </div>
+    <div style="font-size:11px;color:var(--gray-3);margin-bottom:10px">${disponibles.length} cliente${disponibles.length>1?'s':''} disponible${disponibles.length>1?'s':''}</div>
+    <select id="chkEspDropdown" size="1" style="width:100%;border:1.5px solid var(--gray-2);border-radius:8px;padding:9px 12px;font-size:13px;font-family:'Nunito',sans-serif;outline:none;color:var(--navy);margin-bottom:14px;cursor:pointer">
+      <option value="">— Seleccionar cliente —</option>
+      ${disponibles.map(d=>`<option value="${escHtml(d.id)}">${escHtml(d.nombre.trim())}</option>`).join('')}
+    </select>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button onclick="document.getElementById('chkAddDropdown').remove()"
+        style="padding:8px 16px;border-radius:7px;border:1.5px solid var(--gray-2);background:var(--gray-0);font-family:'Nunito',sans-serif;font-size:13px;font-weight:700;cursor:pointer;color:var(--gray-4)">
+        Cancelar
+      </button>
+      <button onclick="chkConfirmarAgregar()"
+        style="padding:8px 16px;border-radius:7px;border:none;background:linear-gradient(135deg,var(--blue),#0e4a9e);color:white;font-family:'Nunito',sans-serif;font-size:13px;font-weight:700;cursor:pointer">
+        <i class="fa-solid fa-plus"></i> Agregar
+      </button>
+    </div>`;
+  document.body.appendChild(div);
 };
 
 window.chkConfirmarAgregar = async () => {
   const sel = document.getElementById('chkEspDropdown');
-  const nombre = sel?.value;
-  if (!nombre) { toast('Selecciona un especialista.','error'); return; }
-  const k = chkKey(nombre);
+  const doctorId = sel?.value;
+  if (!doctorId) { toast('Selecciona un cliente.','error'); return; }
+  // Find the doctor to get nombre
+  const doctor = doctors.find(d=>d.id===doctorId);
+  const nombre = doctor?.nombre?.trim()||doctorId;
+  const k = doctorId; // use doctorId as the key — unique and stable
   document.getElementById('chkAddDropdown')?.remove();
   try {
     await updateDoc(doc(db,'checklistMensual',chkMesActual),{
-      [`especialistas.${k}`]:{nombre,dayana:false,santiago:false,envios:false,ibc:false},
+      [`especialistas.${k}`]:{nombre, doctorId, dayana:false, santiago:false, envios:false, ibc:false},
       updatedAt:serverTimestamp()
     });
     toast(`${nombre} agregado al checklist.`,'success');
@@ -5272,4 +5291,3 @@ window.chkToggle = async (espKey, col, value) => {
     });
   } catch(e){ toast('Error al guardar: '+e.message,'error'); }
 };
-
