@@ -1750,20 +1750,25 @@ async function notifProcesosPorVencer() {
 let editingFactId = null;
 
 /* Suscripción — cuando cambian facturas, avisar al iframe */
+let _facturasDebounce = null;
 function subscribeFacturas() {
   onSnapshot(
     query(collection(db,'facturas'), orderBy('createdAt','desc')),
     snap => {
-      const facturas = snap.docs.map(d => ({id:d.id,...d.data()}));
-      const frame = document.getElementById('repFrame');
-      if (frame?.contentWindow) {
-        frame.contentWindow.postMessage({
-          type: 'FACTURAS_UPDATE',
-          facturas,
-          // Siempre enviar doctors actuales (pueden haber llegado después del IFRAME_READY)
-          doctors: doctors.map(d=>({id:d.id, nombre:d.nombre, especialidad:d.especialidad}))
-        }, '*');
-      }
+      // Debounce: wait 800ms after last change before notifying iframe
+      // This prevents partial updates during bulk import
+      clearTimeout(_facturasDebounce);
+      _facturasDebounce = setTimeout(() => {
+        const facturas = snap.docs.map(d => ({id:d.id,...d.data()}));
+        const frame = document.getElementById('repFrame');
+        if (frame?.contentWindow) {
+          frame.contentWindow.postMessage({
+            type: 'FACTURAS_UPDATE',
+            facturas,
+            doctors: doctors.map(d=>({id:d.id, nombre:d.nombre, especialidad:d.especialidad}))
+          }, '*');
+        }
+      }, 800);
     }
   );
 }
@@ -2192,8 +2197,19 @@ window.confirmarImport = async function() {
       btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Guardando ${saved}/${importData.length}…`;
     }
 
-    toast(`✅ ${saved} registros importados exitosamente.`, 'success');
+    toast(`${saved} registros importados exitosamente.`, 'success');
+
+    // Reset button BEFORE closing so it's clean next time
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fa-solid fa-cloud-arrow-up"></i> Guardar en Firebase';
+
     closeImportModal();
+
+    // Forzar recarga del iframe con todos los datos actualizados
+    setTimeout(() => {
+      const frame = document.getElementById('repFrame');
+      if (frame) frame.src = frame.src;
+    }, 1200);
 
   } catch(err) {
     toast('Error al importar: ' + err.message, 'error');
@@ -2205,6 +2221,12 @@ window.confirmarImport = async function() {
 window.closeImportModal = function() {
   document.getElementById('importModal').classList.remove('open');
   importData = [];
+  // Reset file input so same file can be imported again
+  const fileInput = document.getElementById('excelFileInput');
+  if (fileInput) fileInput.value = '';
+  // Reset confirm button just in case
+  const btn = document.getElementById('btnConfirmImport');
+  if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-cloud-arrow-up"></i> Guardar en Firebase'; }
 };
 
 /* ══════════════════════════════════════════════════
