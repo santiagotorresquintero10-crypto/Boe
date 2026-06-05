@@ -344,12 +344,74 @@
               <i class="fa-solid fa-file-excel" style="color:#2e7d32"></i> Importar Excel
               <input type="file" id="excelFileInput" accept=".xlsx,.xls,.csv" style="display:none" onchange="importarExcel(event)"/>
             </label>
+            <button class="btn btn-primary" onclick="openChecklist()" style="background:linear-gradient(135deg,#2e7d32,#1b5e20)">
+              <i class="fa-solid fa-list-check"></i> Checklist Mensual
+            </button>
           </div>
         </div>
         <div class="rep-iframe-wrap">
           <iframe id="repFrame" src="reportes.html" frameborder="0" allowfullscreen></iframe>
         </div>
       </section>
+
+      <!-- CHECKLIST MENSUAL MODAL -->
+      <div class="modal-overlay" id="checklistModal">
+        <div class="modal" style="max-width:95vw;width:1100px;max-height:92vh">
+          <div class="modal-head" style="background:linear-gradient(135deg,#1a3a6b,#0e4a9e);color:white;border-radius:12px 12px 0 0">
+            <div style="display:flex;flex-direction:column;gap:3px">
+              <h3 style="color:white;font-family:'Syne',sans-serif;font-size:16px">
+                <i class="fa-solid fa-list-check" style="color:#7eb3ff"></i>
+                CHECKLIST MENSUAL — INFORMES Y SEGURIDAD SOCIAL
+              </h3>
+              <div id="chkMesLabel" style="font-size:12px;color:rgba(255,255,255,.6)"></div>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <select id="chkMesSelect" onchange="chkLoadMes()"
+                style="background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);border-radius:7px;padding:5px 10px;font-size:12.5px;color:white;outline:none;font-family:'Nunito',sans-serif;cursor:pointer">
+              </select>
+              <button class="btn btn-ghost btn-xs" onclick="chkNuevoMes()" style="color:white;border-color:rgba(255,255,255,.3)">
+                <i class="fa-solid fa-plus"></i> Nuevo mes
+              </button>
+              <button class="modal-x" onclick="closeChecklist()" style="background:rgba(255,255,255,.15);color:white"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+          </div>
+          <div class="modal-body" style="padding:0;overflow:hidden">
+            <!-- Alerta de pendientes -->
+            <div id="chkAlerta" style="display:none;padding:10px 18px;background:#fff3cd;border-bottom:1px solid #ffc107;font-size:13px;color:#856404;display:flex;align-items:center;gap:8px">
+              <i class="fa-solid fa-triangle-exclamation"></i>
+              <span id="chkAlertaText"></span>
+            </div>
+            <!-- Progress bar -->
+            <div style="padding:12px 18px 8px;border-bottom:1px solid var(--gray-1)">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+                <span style="font-size:12px;font-weight:700;color:var(--navy)" id="chkProgLabel">Cargando...</span>
+                <span id="chkEstadoBadge" style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:12px"></span>
+              </div>
+              <div style="height:7px;background:var(--gray-1);border-radius:4px;overflow:hidden">
+                <div id="chkProgBar" style="height:100%;border-radius:4px;background:linear-gradient(90deg,#2e7d32,#4caf50);transition:width .4s;width:0%"></div>
+              </div>
+            </div>
+            <!-- Table -->
+            <div style="overflow:auto;max-height:calc(92vh - 220px)">
+              <table id="chkTable" class="data-table" style="min-width:700px">
+                <thead>
+                  <tr>
+                    <th style="min-width:180px">ESPECIALISTA</th>
+                    <th style="text-align:center;width:120px"><i class="fa-solid fa-file-lines" style="color:#7eb3ff"></i> DAYANA<br>INFORMES</th>
+                    <th style="text-align:center;width:120px"><i class="fa-solid fa-chart-pie" style="color:#7eb3ff"></i> SANTIAGO<br>DASHBOARD</th>
+                    <th style="text-align:center;width:140px"><i class="fa-solid fa-paper-plane" style="color:#7eb3ff"></i> ENVÍOS<br>ESPECIALISTAS</th>
+                    <th style="text-align:center;width:110px"><i class="fa-solid fa-shield-halved" style="color:#7eb3ff"></i> IBC / SS</th>
+                    <th style="text-align:center;width:90px">ESTADO</th>
+                  </tr>
+                </thead>
+                <tbody id="chkBody">
+                  <tr><td colspan="6" style="text-align:center;padding:40px;color:var(--gray-3)">Cargando especialistas...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <!-- CUADRO DE TURNOS -->
       <section class="view" id="view-turnos">
@@ -1401,3 +1463,4 @@
 <script type="module" src="script.js"></script>
 </body>
 </html>
+

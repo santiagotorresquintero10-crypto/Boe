@@ -4991,3 +4991,198 @@ window.exportarTablaExcel = (tablaId) => {
   XLSX.writeFile(wb, fileName);
   toast(`✅ Exportado: ${fileName}`,'success');
 };
+
+/* ══════════════════════════════════════════════════
+   CHECKLIST MENSUAL — INFORMES Y SEGURIDAD SOCIAL
+══════════════════════════════════════════════════ */
+
+const CHK_COLS = ['dayana','santiago','envios','ibc'];
+const CHK_LABELS = {
+  dayana:   'Dayana Informes',
+  santiago: 'Santiago Dashboard',
+  envios:   'Envíos Especialistas',
+  ibc:      'IBC / SS'
+};
+const MESES_CHK = ['Enero','Febrero','Marzo','Abril','Mayo','Junio',
+                   'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+
+let chkData = {};      // { mesKey: { especialista: {dayana,santiago,envios,ibc} } }
+let chkMesActual = ''; // e.g. "2026-05"
+let chkDocId = '';     // Firestore doc id for current mes
+let chkUnsubscribe = null;
+
+function chkMesLabel(key) {
+  if (!key) return '';
+  const [y, m] = key.split('-');
+  return `${MESES_CHK[parseInt(m)-1]} ${y}`;
+}
+
+function chkHoy() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+}
+
+window.openChecklist = async () => {
+  document.getElementById('checklistModal').classList.add('open');
+  await chkInit();
+};
+
+window.closeChecklist = () => {
+  document.getElementById('checklistModal').classList.remove('open');
+  if (chkUnsubscribe) { chkUnsubscribe(); chkUnsubscribe = null; }
+};
+
+async function chkInit() {
+  // Load all checklist docs to populate month selector
+  try {
+    const snap = await getDocs(collection(db, 'checklistMensual'));
+    const meses = snap.docs.map(d => ({id:d.id, ...d.data()}))
+                          .sort((a,b) => b.mes.localeCompare(a.mes));
+
+    const sel = document.getElementById('chkMesSelect');
+    const hoy = chkHoy();
+
+    // If current month doesn't exist yet, create it
+    const existing = meses.find(m => m.mes === hoy);
+    if (!existing) {
+      await chkCrearMes(hoy);
+      return chkInit(); // reload
+    }
+
+    // Populate selector
+    sel.innerHTML = meses.map(m =>
+      `<option value="${m.mes}" ${m.mes===hoy?'selected':''}>${chkMesLabel(m.mes)}</option>`
+    ).join('');
+
+    chkMesActual = sel.value || hoy;
+    await chkLoadMes();
+  } catch(e) {
+    console.error('chkInit error', e);
+  }
+}
+
+window.chkNuevoMes = async () => {
+  const sel = document.getElementById('chkMesSelect');
+  // Show a prompt for which month
+  const input = prompt('Mes a crear (formato YYYY-MM, ej: 2026-06):',
+    (() => { const d=new Date(); d.setMonth(d.getMonth()+1); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; })()
+  );
+  if (!input || !/^\d{4}-\d{2}$/.test(input)) return;
+  await chkCrearMes(input);
+  await chkInit();
+  // Select new month
+  sel.value = input;
+  chkMesActual = input;
+  await chkLoadMes();
+};
+
+async function chkCrearMes(mesKey) {
+  // Build initial data with all current especialistas
+  const esps = [...new Set(doctors.filter(d=>d.especialista).map(d=>d.especialista))].sort();
+  const data = {};
+  esps.forEach(e => { data[chkKey(e)] = {nombre:e, dayana:false, santiago:false, envios:false, ibc:false}; });
+  await setDoc(doc(db,'checklistMensual', mesKey), { mes:mesKey, especialistas:data, updatedAt:serverTimestamp() });
+}
+
+function chkKey(nombre) {
+  return nombre.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]/g,'_').slice(0,40);
+}
+
+window.chkLoadMes = async () => {
+  const sel = document.getElementById('chkMesSelect');
+  chkMesActual = sel.value;
+  document.getElementById('chkMesLabel').textContent = chkMesLabel(chkMesActual);
+
+  if (chkUnsubscribe) chkUnsubscribe();
+  chkUnsubscribe = onSnapshot(doc(db,'checklistMensual',chkMesActual), snap => {
+    if (!snap.exists()) return;
+    const d = snap.data();
+    chkDocId = snap.id;
+    // Merge any new especialistas not yet in this month's doc
+    const esps = [...new Set(doctors.filter(x=>x.especialista).map(x=>x.especialista))].sort();
+    const data = d.especialistas || {};
+    let dirty = false;
+    esps.forEach(e => {
+      const k = chkKey(e);
+      if (!data[k]) { data[k] = {nombre:e, dayana:false, santiago:false, envios:false, ibc:false}; dirty=true; }
+    });
+    if (dirty) updateDoc(doc(db,'checklistMensual',chkMesActual), {especialistas:data, updatedAt:serverTimestamp()}).catch(()=>{});
+    chkRender(esps, data);
+  });
+};
+
+function chkRender(esps, data) {
+  const tbody = document.getElementById('chkBody');
+  if (!tbody) return;
+
+  let totalItems = 0, doneItems = 0;
+
+  const rows = esps.map(esp => {
+    const k = chkKey(esp);
+    const row = data[k] || {dayana:false,santiago:false,envios:false,ibc:false};
+    const rowDone = CHK_COLS.every(c => row[c]);
+    const rowProgress = CHK_COLS.filter(c => row[c]).length;
+    totalItems += CHK_COLS.length;
+    doneItems  += rowProgress;
+
+    const checks = CHK_COLS.map(col => {
+      const checked = !!row[col];
+      const isEnvio = col === 'envios';
+      return `<td style="text-align:center">
+        <label style="cursor:pointer;display:flex;align-items:center;justify-content:center;gap:5px">
+          <input type="checkbox" ${checked?'checked':''} style="width:17px;height:17px;accent-color:var(--green);cursor:pointer"
+            onchange="chkToggle('${k}','${col}',this.checked)"/>
+          ${isEnvio ? `<span style="font-size:10px;font-weight:700;color:${checked?'#2e7d32':'#c62828'}">${checked?'Enviado':'Pendiente'}</span>` : ''}
+        </label>
+      </td>`;
+    }).join('');
+
+    const estadoColor = rowDone ? '#2e7d32' : rowProgress > 0 ? '#e65100' : '#c62828';
+    const estadoIcon  = rowDone ? 'fa-circle-check' : rowProgress > 0 ? 'fa-circle-half-stroke' : 'fa-circle-xmark';
+    const estadoLabel = rowDone ? 'Listo' : rowProgress > 0 ? 'En proceso' : 'Pendiente';
+
+    return `<tr style="${rowDone?'background:#f1f8f1':''}">
+      <td style="font-weight:700;color:var(--navy)">${escHtml(esp)}</td>
+      ${checks}
+      <td style="text-align:center">
+        <span style="color:${estadoColor};font-size:12px;font-weight:700;white-space:nowrap">
+          <i class="fa-solid ${estadoIcon}"></i> ${estadoLabel}
+        </span>
+      </td>
+    </tr>`;
+  });
+
+  tbody.innerHTML = rows.join('') || '<tr><td colspan="6" style="text-align:center;padding:30px;color:var(--gray-3)">Sin especialistas</td></tr>';
+
+  // Progress bar
+  const pct = totalItems ? Math.round(doneItems/totalItems*100) : 0;
+  document.getElementById('chkProgBar').style.width = pct+'%';
+  document.getElementById('chkProgLabel').textContent = `${doneItems} de ${totalItems} completados (${pct}%)`;
+
+  const allDone = pct === 100;
+  const badge = document.getElementById('chkEstadoBadge');
+  badge.textContent = allDone ? 'MES COMPLETADO' : pct > 0 ? 'En proceso' : 'Pendiente';
+  badge.style.background = allDone ? '#e8f5e9' : pct > 0 ? '#fff3e0' : '#ffebee';
+  badge.style.color       = allDone ? '#2e7d32' : pct > 0 ? '#e65100' : '#c62828';
+
+  // Alert pendientes envios
+  const pendEnvios = esps.filter(e => !(data[chkKey(e)]?.envios));
+  const alerta = document.getElementById('chkAlerta');
+  const alertaTxt = document.getElementById('chkAlertaText');
+  if (pendEnvios.length) {
+    alerta.style.display = 'flex';
+    alertaTxt.textContent = `Recuerda completar los envíos pendientes de este mes — faltan ${pendEnvios.length} especialista${pendEnvios.length>1?'s':''}.`;
+  } else {
+    alerta.style.display = 'none';
+  }
+}
+
+window.chkToggle = async (espKey, col, value) => {
+  if (!chkMesActual) return;
+  try {
+    await updateDoc(doc(db,'checklistMensual',chkMesActual), {
+      [`especialistas.${espKey}.${col}`]: value,
+      updatedAt: serverTimestamp()
+    });
+  } catch(e) { toast('Error al guardar: '+e.message, 'error'); }
+};
