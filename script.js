@@ -5095,8 +5095,8 @@ window.chkAgregarEsp = () => {
   getDoc(snap_ref).then(snap => {
     const data = snap.exists() ? (snap.data().especialistas||{}) : {};
     const disponibles = doctors
-      .filter(d=>d.especialista)
-      .map(d=>d.especialista)
+      .filter(d=>d.nombre)
+      .map(d=>d.nombre)
       .filter(e=>!data[chkKey(e)])
       .sort();
 
@@ -5272,3 +5272,4 @@ window.chkToggle = async (espKey, col, value) => {
     });
   } catch(e){ toast('Error al guardar: '+e.message,'error'); }
 };
+
