@@ -3,7 +3,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/fireba
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, signOut, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { getFirestore, collection, doc, addDoc, setDoc, updateDoc, deleteDoc,
-  onSnapshot, query, orderBy, serverTimestamp, getDoc, getDocs, where }
+  onSnapshot, query, orderBy, serverTimestamp, getDoc, getDocs, where, deleteField }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -5072,10 +5072,8 @@ async function chkInit() {
 
 /* ── Crear nuevo mes ── */
 async function chkCrearMes(mesKey) {
-  const esps = [...new Set(doctors.filter(d=>d.especialista).map(d=>d.especialista))].sort();
-  const data = {};
-  esps.forEach(e=>{ data[chkKey(e)]={nombre:e,dayana:false,santiago:false,envios:false,ibc:false}; });
-  await setDoc(doc(db,'checklistMensual',mesKey),{mes:mesKey,especialistas:data,updatedAt:serverTimestamp()});
+  // Start empty — user adds specialists manually
+  await setDoc(doc(db,'checklistMensual',mesKey),{mes:mesKey,especialistas:{},updatedAt:serverTimestamp()});
 }
 
 window.chkNuevoMes = async () => {
@@ -5090,28 +5088,74 @@ window.chkNuevoMes = async () => {
   await chkLoadMes();
 };
 
-/* ── Agregar especialista manualmente ── */
-window.chkAgregarEsp = async () => {
-  const nombre = prompt('Nombre del especialista a agregar:','');
-  if (!nombre||!nombre.trim()) return;
-  const k = chkKey(nombre.trim());
+/* ── Agregar especialista — dropdown de clientes ── */
+window.chkAgregarEsp = () => {
+  // Build options from doctors not yet in checklist
+  const snap_ref = doc(db,'checklistMensual',chkMesActual);
+  getDoc(snap_ref).then(snap => {
+    const data = snap.exists() ? (snap.data().especialistas||{}) : {};
+    const disponibles = doctors
+      .filter(d=>d.especialista)
+      .map(d=>d.especialista)
+      .filter(e=>!data[chkKey(e)])
+      .sort();
+
+    if (!disponibles.length) { toast('Todos los especialistas ya están en el checklist.','warn'); return; }
+
+    // Show a modal-like select via a floating div
+    const existing = document.getElementById('chkAddDropdown');
+    if (existing) existing.remove();
+
+    const div = document.createElement('div');
+    div.id = 'chkAddDropdown';
+    div.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:white;border-radius:12px;box-shadow:0 8px 32px rgba(11,31,58,.22);z-index:3000;padding:20px;min-width:320px;max-width:420px';
+    div.innerHTML = `
+      <div style="font-family:'Syne',sans-serif;font-size:15px;font-weight:700;color:var(--navy);margin-bottom:12px">
+        <i class="fa-solid fa-user-plus" style="color:var(--blue);margin-right:6px"></i>Agregar Especialista
+      </div>
+      <select id="chkEspDropdown" style="width:100%;border:1.5px solid var(--gray-2);border-radius:8px;padding:9px 12px;font-size:13px;font-family:'Nunito',sans-serif;outline:none;color:var(--navy);margin-bottom:14px">
+        <option value="">— Seleccionar especialista —</option>
+        ${disponibles.map(e=>`<option value="${escHtml(e)}">${escHtml(e)}</option>`).join('')}
+      </select>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button onclick="document.getElementById('chkAddDropdown').remove()"
+          style="padding:8px 16px;border-radius:7px;border:1.5px solid var(--gray-2);background:var(--gray-0);font-family:'Nunito',sans-serif;font-size:13px;font-weight:700;cursor:pointer;color:var(--gray-4)">
+          Cancelar
+        </button>
+        <button onclick="chkConfirmarAgregar()"
+          style="padding:8px 16px;border-radius:7px;border:none;background:linear-gradient(135deg,var(--blue),#0e4a9e);color:white;font-family:'Nunito',sans-serif;font-size:13px;font-weight:700;cursor:pointer">
+          <i class="fa-solid fa-plus"></i> Agregar
+        </button>
+      </div>`;
+    document.body.appendChild(div);
+  });
+};
+
+window.chkConfirmarAgregar = async () => {
+  const sel = document.getElementById('chkEspDropdown');
+  const nombre = sel?.value;
+  if (!nombre) { toast('Selecciona un especialista.','error'); return; }
+  const k = chkKey(nombre);
+  document.getElementById('chkAddDropdown')?.remove();
   try {
     await updateDoc(doc(db,'checklistMensual',chkMesActual),{
-      [`especialistas.${k}`]:{nombre:nombre.trim(),dayana:false,santiago:false,envios:false,ibc:false},
+      [`especialistas.${k}`]:{nombre,dayana:false,santiago:false,envios:false,ibc:false},
       updatedAt:serverTimestamp()
     });
+    toast(`${nombre} agregado al checklist.`,'success');
   } catch(e){ toast('Error: '+e.message,'error'); }
 };
 
-/* ── Eliminar especialista del checklist (solo de este seguimiento) ── */
+/* ── Eliminar especialista del checklist ── */
 window.chkEliminarEsp = async (espKey) => {
   if (!confirm('Quitar este especialista del checklist? No se borra del sistema.')) return;
   try {
-    const snap = await getDoc(doc(db,'checklistMensual',chkMesActual));
-    if (!snap.exists()) return;
-    const data = snap.data().especialistas||{};
-    delete data[espKey];
-    await updateDoc(doc(db,'checklistMensual',chkMesActual),{especialistas:data,updatedAt:serverTimestamp()});
+    // Use deleteField() to remove the nested field properly
+    await updateDoc(doc(db,'checklistMensual',chkMesActual),{
+      [`especialistas.${espKey}`]: deleteField(),
+      updatedAt: serverTimestamp()
+    });
+    toast('Especialista quitado del checklist.','success');
   } catch(e){ toast('Error: '+e.message,'error'); }
 };
 
@@ -5124,12 +5168,7 @@ window.chkLoadMes = async () => {
   chkUnsubscribe = onSnapshot(doc(db,'checklistMensual',chkMesActual), snap=>{
     if (!snap.exists()) return;
     const d = snap.data();
-    const esps = [...new Set(doctors.filter(x=>x.especialista).map(x=>x.especialista))].sort();
     const data = d.especialistas||{};
-    // Merge new specialists automatically
-    let dirty = false;
-    esps.forEach(e=>{ const k=chkKey(e); if(!data[k]){data[k]={nombre:e,dayana:false,santiago:false,envios:false,ibc:false};dirty=true;} });
-    if (dirty) updateDoc(doc(db,'checklistMensual',chkMesActual),{especialistas:data,updatedAt:serverTimestamp()}).catch(()=>{});
     chkRender(data);
   });
 };
