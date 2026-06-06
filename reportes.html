@@ -183,8 +183,13 @@ function App(){
   const[facturas,     setFacturas]     = useState([]);
   const[doctors,      setDoctors]      = useState([]);
   const[doctorStyles, setDoctorStyles] = useState({});
-  const[filtAnio,  setFiltAnio]  = useState('');
-  const[filtMes,   setFiltMes]   = useState('');
+  const hoy = new Date();
+  const mesHoyIdx = hoy.getMonth(); // 0-11
+  const mesHoy = MESES[mesHoyIdx];
+  const anioHoy = String(hoy.getFullYear());
+
+  const[filtAnio,  setFiltAnio]  = useState(anioHoy);
+  const[filtMes,   setFiltMes]   = useState(mesHoy);
   const[filtDoctor,setFiltDoctor]= useState('');
   const[color,     setColor]     = useState('#1a3a6b');
   const[logoURL,   setLogoURL]   = useState('');
@@ -233,17 +238,32 @@ function App(){
   };
 
   /* ── Calcular datos ── */
-  const filtered=facturas.filter(f=>(!filtAnio||String(f.anio)===filtAnio)&&(!filtMes||f.mes===filtMes)&&(!filtDoctor||f.doctorId===filtDoctor));
+  const docSeleccionado = filtDoctor ? doctors.find(d=>d.id===filtDoctor) : null;
+  const filtered=facturas.filter(f=>{
+    if (filtAnio  && String(f.anio)!==filtAnio)  return false;
+    if (filtMes   && f.mes!==filtMes)             return false;
+    if (filtDoctor) {
+      // Match by doctorId OR by doctorNombre (for records imported without matching)
+      const matchId     = f.doctorId === filtDoctor;
+      const matchNombre = docSeleccionado && (
+        f.doctorNombre === docSeleccionado.nombre ||
+        f.doctorNombre === docSeleccionado.especialista
+      );
+      if (!matchId && !matchNombre) return false;
+    }
+    return true;
+  });
   const totalFilt=filtered.reduce((s,f)=>s+(Number(f.valor)||0),0);
   const ibc=Math.round(totalFilt*0.40);
   const idx=MESES.indexOf(filtMes);
   const mesAnt=filtMes?(idx>0?MESES[idx-1]:MESES[11]):'';
   const añoAnt=filtMes?(idx>0?filtAnio:String(Number(filtAnio)-1)):filtAnio;
-  const totalAnt=filtMes?facturas.filter(f=>f.mes===mesAnt&&(!filtAnio||String(f.anio)===añoAnt)&&(!filtDoctor||f.doctorId===filtDoctor)).reduce((s,f)=>s+(Number(f.valor)||0),0):0;
+  const matchDoctor = f => !filtDoctor || f.doctorId===filtDoctor || (docSeleccionado && (f.doctorNombre===docSeleccionado.nombre||f.doctorNombre===docSeleccionado.especialista));
+  const totalAnt=filtMes?facturas.filter(f=>f.mes===mesAnt&&(!filtAnio||String(f.anio)===añoAnt)&&matchDoctor(f)).reduce((s,f)=>s+(Number(f.valor)||0),0):0;
   const diff=totalFilt-totalAnt; const pct=(filtMes&&totalAnt)?(diff/totalAnt)*100:null;
   const arrow=diff>0?'▲':diff<0?'▼':'→'; const arrowClr=diff>0?'#16a34a':diff<0?'#dc2626':'#6b7280';
   const curYear=new Date().getFullYear();
-  const sumaMes=yr=>MESES.map(mes=>facturas.filter(f=>Number(f.anio)===yr&&f.mes===mes&&(!filtDoctor||f.doctorId===filtDoctor)).reduce((s,f)=>s+(Number(f.valor)||0),0));
+  const sumaMes=yr=>MESES.map(mes=>facturas.filter(f=>Number(f.anio)===yr&&f.mes===mes&&matchDoctor(f)).reduce((s,f)=>s+(Number(f.valor)||0),0));
   const entMap={}; filtered.forEach(f=>{const k=f.entidad||'Sin entidad'; entMap[k]=(entMap[k]||0)+(Number(f.valor)||0);});
   const entData=Object.entries(entMap).sort((a,b)=>b[1]-a[1]).map(([l,v])=>({l,v}));
   const años=[...new Set(facturas.map(f=>f.anio))].filter(Boolean).sort().reverse();
