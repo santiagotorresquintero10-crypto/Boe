@@ -5336,10 +5336,22 @@ window.analizarDuplicados = async () => {
     const snap = await getDocs(collection(db,'facturas'));
     const all  = snap.docs.map(d=>({_ref:d.ref, _id:d.id, ...d.data()}));
 
-    // Group by doctorId + mes + año + entidad
+    const norm = s => (s||'').toString().toLowerCase()
+      .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+      .replace(/\s+/g,' ').trim();
+
+    // Group by doctor + mes + año + entidad + valor (strict)
+    // Also group by doctor + mes + año + entidad (flexible — catches entidad typos)
+    // Use the FLEXIBLE key to find near-duplicates
     const groups = {};
     all.forEach(f => {
-      const key = `${f.doctorId||'sin-doctor'}__${f.mes||''}__${f.anio||''}__${(f.entidad||'').toLowerCase().trim()}`;
+      // Flexible key: ignore small entidad differences, ignore value
+      const key = [
+        f.doctorId || norm(f.doctorNombre||f.doctor||'sin-doctor'),
+        norm(f.mes),
+        String(f.anio||''),
+        norm(f.entidad).slice(0,20), // only first 20 chars to catch truncation diffs
+      ].join('__');
       if (!groups[key]) groups[key] = [];
       groups[key].push(f);
     });
@@ -5349,19 +5361,17 @@ window.analizarDuplicados = async () => {
       .filter(([,arr]) => arr.length > 1)
       .map(([key, arr]) => {
         const first = arr[0];
-        const doc   = doctors.find(d=>d.id===first.doctorId);
+        const doctor = doctors.find(d=>d.id===first.doctorId);
+        const sorted = arr.sort((a,b)=>(a.createdAt?.seconds||0)-(b.createdAt?.seconds||0));
         return {
           key,
-          doctorNombre: doc?.nombre || doc?.especialista || first.doctorId || 'Sin médico',
+          doctorNombre: doctor?.nombre || first.doctorNombre || first.doctor || first.doctorId || 'Sin médico',
           mes:    first.mes||'',
           anio:   first.anio||'',
           entidad: first.entidad||'',
           total:  arr.length,
-          // Keep first (oldest by createdAt), delete rest
-          toDelete: arr
-            .sort((a,b)=>(a.createdAt?.seconds||0)-(b.createdAt?.seconds||0))
-            .slice(1) // keep first, delete duplicates
-            .map(f=>f._ref),
+          valorTotal: arr.reduce((s,f)=>s+(Number(f.valor)||0),0),
+          toDelete: sorted.slice(1).map(f=>f._ref),
         };
       })
       .sort((a,b)=>a.doctorNombre.localeCompare(b.doctorNombre));
@@ -5373,11 +5383,14 @@ window.analizarDuplicados = async () => {
       status.innerHTML = `
         <i class="fa-solid fa-circle-check" style="font-size:36px;color:#2e7d32;margin-bottom:10px;display:block"></i>
         <strong style="color:#2e7d32">No se encontraron duplicados.</strong><br>
-        <span style="font-size:12px;color:var(--gray-3)">${all.length} registros revisados — todo limpio.</span>`;
+        <span style="font-size:12px;color:var(--gray-3)">${all.length} registros revisados — todo limpio.</span>
+        <br><br>
+        <button class="btn btn-ghost btn-xs" onclick="verDiagnostico()" style="margin-top:8px">
+          <i class="fa-solid fa-microscope"></i> Ver diagnóstico por médico/mes
+        </button>`;
       return;
     }
 
-    // Render table
     const totalDups = _dedupGroups.reduce((s,g)=>s+g.toDelete.length, 0);
     document.getElementById('dedupSummary').innerHTML = `
       <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:10px">
@@ -5398,8 +5411,8 @@ window.analizarDuplicados = async () => {
           <span style="font-weight:700;color:var(--navy)">${escHtml(g.doctorNombre)}</span>
         </label></td>
         <td>${g.mes} ${g.anio}</td>
-        <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(g.entidad)}">${escHtml(g.entidad)||'—'}</td>
-        <td style="text-align:right"><span style="background:#ffebee;color:#c62828;font-weight:700;padding:2px 8px;border-radius:10px">${g.total} total → elimina ${g.toDelete.length}</span></td>
+        <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(g.entidad)||'—'}</td>
+        <td style="text-align:right"><span style="background:#ffebee;color:#c62828;font-weight:700;padding:2px 8px;border-radius:10px">${g.total} registros → elimina ${g.toDelete.length}</span></td>
       </tr>`).join('');
 
     document.getElementById('dedupResults').style.display = 'block';
@@ -5408,6 +5421,55 @@ window.analizarDuplicados = async () => {
 
   } catch(e) {
     status.innerHTML = `<span style="color:var(--red)"><i class="fa-solid fa-xmark-circle"></i> Error: ${e.message}</span>`;
+  }
+};
+
+/* Diagnóstico — muestra conteo por médico/mes para detectar inflación */
+window.verDiagnostico = async () => {
+  const status = document.getElementById('dedupStatus');
+  status.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Cargando diagnóstico...';
+  try {
+    const snap = await getDocs(collection(db,'facturas'));
+    const all  = snap.docs.map(d=>({_id:d.id,...d.data()}));
+    const norm = s => (s||'').toString().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
+
+    // Group by doctor + mes + año — show count and total value
+    const groups = {};
+    all.forEach(f => {
+      const doctor = doctors.find(d=>d.id===f.doctorId);
+      const nombre = doctor?.nombre || f.doctorNombre || f.doctor || f.doctorId || '—';
+      const key    = `${nombre}__${norm(f.mes)}__${f.anio||''}`;
+      if (!groups[key]) groups[key] = {nombre, mes:f.mes||'', anio:f.anio||'', count:0, total:0};
+      groups[key].count++;
+      groups[key].total += Number(f.valor)||0;
+    });
+
+    const rows = Object.values(groups)
+      .sort((a,b)=>a.nombre.localeCompare(b.nombre)||String(a.anio).localeCompare(String(b.anio))||a.mes.localeCompare(b.mes));
+
+    status.innerHTML = `
+      <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:8px">
+        Diagnóstico — ${all.length} registros en total
+      </div>
+      <div style="max-height:300px;overflow-y:auto;border:1px solid var(--gray-1);border-radius:8px">
+        <table class="data-table" style="font-size:11.5px;min-width:400px">
+          <thead><tr>
+            <th>Médico</th><th>Mes</th><th>Año</th>
+            <th style="text-align:right">Registros</th>
+            <th style="text-align:right">Valor total</th>
+          </tr></thead>
+          <tbody>
+            ${rows.map(r=>`<tr style="${r.count>500?'background:#fff3e0':''}">
+              <td style="font-weight:${r.count>500?'700':'400'}">${escHtml(r.nombre)}</td>
+              <td>${r.mes}</td><td>${r.anio}</td>
+              <td style="text-align:right;color:${r.count>500?'#e65100':'var(--navy)'}"><strong>${r.count}</strong></td>
+              <td style="text-align:right">${fmtCOP(r.total)}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  } catch(e) {
+    status.innerHTML = `<span style="color:var(--red)">Error: ${e.message}</span>`;
   }
 };
 
