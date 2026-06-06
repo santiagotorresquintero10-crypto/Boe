@@ -347,6 +347,9 @@
             <button class="btn btn-primary" onclick="openChecklist()" style="background:linear-gradient(135deg,#2e7d32,#1b5e20)">
               <i class="fa-solid fa-list-check"></i> Checklist Mensual
             </button>
+            <button class="btn btn-ghost" onclick="openDedupModal()" style="color:var(--red);border-color:rgba(192,57,43,.3)" title="Eliminar registros duplicados">
+              <i class="fa-solid fa-copy-slash fa-solid fa-broom"></i> Limpiar duplicados
+            </button>
           </div>
         </div>
         <div class="rep-iframe-wrap">
@@ -354,7 +357,46 @@
         </div>
       </section>
 
-      <!-- CHECKLIST MENSUAL MODAL -->
+      <!-- MODAL LIMPIAR DUPLICADOS -->
+      <div class="modal-overlay" id="dedupModal">
+        <div class="modal" style="max-width:680px">
+          <div class="modal-head">
+            <h3><i class="fa-solid fa-broom" style="color:var(--red);margin-right:8px"></i>Limpiar Registros Duplicados</h3>
+            <button class="modal-x" onclick="closeDedupModal()"><i class="fa-solid fa-xmark"></i></button>
+          </div>
+          <div class="modal-body">
+            <div style="background:#fff3cd;border:1px solid #ffc107;border-radius:8px;padding:10px 14px;font-size:13px;color:#856404;margin-bottom:14px;display:flex;gap:8px">
+              <i class="fa-solid fa-triangle-exclamation" style="flex-shrink:0;margin-top:1px"></i>
+              <span>Esta herramienta detecta facturas duplicadas (mismo médico + mes + año + entidad) y conserva solo una copia. <strong>La eliminación es permanente.</strong></span>
+            </div>
+            <div id="dedupStatus" style="text-align:center;padding:20px;color:var(--gray-3)">
+              <i class="fa-solid fa-magnifying-glass" style="font-size:32px;margin-bottom:10px;display:block;opacity:.3"></i>
+              Presiona "Analizar" para buscar duplicados
+            </div>
+            <div id="dedupResults" style="display:none">
+              <div id="dedupSummary" style="margin-bottom:12px"></div>
+              <div style="max-height:320px;overflow-y:auto;border:1px solid var(--gray-1);border-radius:8px">
+                <table class="data-table" style="font-size:12.5px">
+                  <thead><tr>
+                    <th><input type="checkbox" id="dedupSelectAll" onchange="dedupToggleAll(this.checked)" style="accent-color:var(--blue)"/> Doctor</th>
+                    <th>Mes/Año</th>
+                    <th>Entidad</th>
+                    <th style="text-align:right">Duplicados</th>
+                  </tr></thead>
+                  <tbody id="dedupBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+          <div class="modal-foot">
+            <button class="btn btn-ghost" onclick="closeDedupModal()">Cerrar</button>
+            <button class="btn btn-ghost" onclick="analizarDuplicados()"><i class="fa-solid fa-magnifying-glass"></i> Analizar</button>
+            <button class="btn btn-danger" id="btnEliminarDups" style="display:none" onclick="eliminarDuplicados()">
+              <i class="fa-solid fa-trash"></i> Eliminar seleccionados
+            </button>
+          </div>
+        </div>
+      </div>
       <div class="modal-overlay" id="checklistModal">
         <div class="modal" style="max-width:96vw;width:1160px;max-height:94vh;display:flex;flex-direction:column">
 

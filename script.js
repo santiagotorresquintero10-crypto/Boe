@@ -5305,3 +5305,144 @@ window.chkToggle = async (espKey, col, value) => {
     });
   } catch(e){ toast('Error al guardar: '+e.message,'error'); }
 };
+
+/* ══════════════════════════════════════════════════
+   LIMPIAR DUPLICADOS — REPORTES
+══════════════════════════════════════════════════ */
+
+let _dedupGroups = []; // groups with duplicates
+
+window.openDedupModal = () => {
+  document.getElementById('dedupModal').classList.add('open');
+  document.getElementById('dedupResults').style.display = 'none';
+  document.getElementById('btnEliminarDups').style.display = 'none';
+  document.getElementById('dedupStatus').style.display = 'block';
+  document.getElementById('dedupStatus').innerHTML = `
+    <i class="fa-solid fa-magnifying-glass" style="font-size:32px;margin-bottom:10px;display:block;opacity:.3"></i>
+    Presiona "Analizar" para buscar duplicados`;
+};
+
+window.closeDedupModal = () => {
+  document.getElementById('dedupModal').classList.remove('open');
+  _dedupGroups = [];
+};
+
+window.analizarDuplicados = async () => {
+  const status = document.getElementById('dedupStatus');
+  status.style.display = 'block';
+  status.innerHTML = '<i class="fa-solid fa-spinner fa-spin" style="font-size:28px;margin-bottom:10px;display:block"></i>Analizando facturas...';
+
+  try {
+    const snap = await getDocs(collection(db,'facturas'));
+    const all  = snap.docs.map(d=>({_ref:d.ref, _id:d.id, ...d.data()}));
+
+    // Group by doctorId + mes + año + entidad
+    const groups = {};
+    all.forEach(f => {
+      const key = `${f.doctorId||'sin-doctor'}__${f.mes||''}__${f.anio||''}__${(f.entidad||'').toLowerCase().trim()}`;
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(f);
+    });
+
+    // Keep only groups with duplicates
+    _dedupGroups = Object.entries(groups)
+      .filter(([,arr]) => arr.length > 1)
+      .map(([key, arr]) => {
+        const first = arr[0];
+        const doc   = doctors.find(d=>d.id===first.doctorId);
+        return {
+          key,
+          doctorNombre: doc?.nombre || doc?.especialista || first.doctorId || 'Sin médico',
+          mes:    first.mes||'',
+          anio:   first.anio||'',
+          entidad: first.entidad||'',
+          total:  arr.length,
+          // Keep first (oldest by createdAt), delete rest
+          toDelete: arr
+            .sort((a,b)=>(a.createdAt?.seconds||0)-(b.createdAt?.seconds||0))
+            .slice(1) // keep first, delete duplicates
+            .map(f=>f._ref),
+        };
+      })
+      .sort((a,b)=>a.doctorNombre.localeCompare(b.doctorNombre));
+
+    status.style.display = 'none';
+
+    if (!_dedupGroups.length) {
+      status.style.display = 'block';
+      status.innerHTML = `
+        <i class="fa-solid fa-circle-check" style="font-size:36px;color:#2e7d32;margin-bottom:10px;display:block"></i>
+        <strong style="color:#2e7d32">No se encontraron duplicados.</strong><br>
+        <span style="font-size:12px;color:var(--gray-3)">${all.length} registros revisados — todo limpio.</span>`;
+      return;
+    }
+
+    // Render table
+    const totalDups = _dedupGroups.reduce((s,g)=>s+g.toDelete.length, 0);
+    document.getElementById('dedupSummary').innerHTML = `
+      <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:10px">
+        <div style="background:#ffebee;border-radius:8px;padding:10px 16px;display:flex;align-items:center;gap:8px">
+          <i class="fa-solid fa-copy" style="color:#c62828;font-size:18px"></i>
+          <div><strong style="font-size:18px;color:#c62828">${_dedupGroups.length}</strong><br><span style="font-size:11px;color:var(--gray-3)">GRUPOS CON DUPS</span></div>
+        </div>
+        <div style="background:#fff3e0;border-radius:8px;padding:10px 16px;display:flex;align-items:center;gap:8px">
+          <i class="fa-solid fa-trash" style="color:#e65100;font-size:18px"></i>
+          <div><strong style="font-size:18px;color:#e65100">${totalDups}</strong><br><span style="font-size:11px;color:var(--gray-3)">REGISTROS A ELIMINAR</span></div>
+        </div>
+      </div>`;
+
+    document.getElementById('dedupBody').innerHTML = _dedupGroups.map((g,i)=>`
+      <tr>
+        <td><label style="display:flex;align-items:center;gap:7px;cursor:pointer">
+          <input type="checkbox" class="dedup-chk" data-idx="${i}" checked style="accent-color:var(--red);width:14px;height:14px"/>
+          <span style="font-weight:700;color:var(--navy)">${escHtml(g.doctorNombre)}</span>
+        </label></td>
+        <td>${g.mes} ${g.anio}</td>
+        <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(g.entidad)}">${escHtml(g.entidad)||'—'}</td>
+        <td style="text-align:right"><span style="background:#ffebee;color:#c62828;font-weight:700;padding:2px 8px;border-radius:10px">${g.total} total → elimina ${g.toDelete.length}</span></td>
+      </tr>`).join('');
+
+    document.getElementById('dedupResults').style.display = 'block';
+    document.getElementById('btnEliminarDups').style.display = 'inline-flex';
+    document.getElementById('dedupSelectAll').checked = true;
+
+  } catch(e) {
+    status.innerHTML = `<span style="color:var(--red)"><i class="fa-solid fa-xmark-circle"></i> Error: ${e.message}</span>`;
+  }
+};
+
+window.dedupToggleAll = (checked) => {
+  document.querySelectorAll('.dedup-chk').forEach(cb => cb.checked = checked);
+};
+
+window.eliminarDuplicados = async () => {
+  const selected = [...document.querySelectorAll('.dedup-chk:checked')]
+    .map(cb => parseInt(cb.dataset.idx))
+    .filter(i => !isNaN(i));
+
+  if (!selected.length) { toast('Selecciona al menos un grupo.','error'); return; }
+
+  const refsToDelete = selected.flatMap(i => _dedupGroups[i]?.toDelete || []);
+  if (!refsToDelete.length) return;
+
+  if (!confirm(`Eliminar ${refsToDelete.length} registro${refsToDelete.length>1?'s':''} duplicado${refsToDelete.length>1?'s':''}? Esta acción no se puede deshacer.`)) return;
+
+  const btn = document.getElementById('btnEliminarDups');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Eliminando...';
+
+  try {
+    // Delete in batches of 20
+    for (let i=0; i<refsToDelete.length; i+=20) {
+      await Promise.all(refsToDelete.slice(i,i+20).map(ref=>deleteDoc(ref)));
+    }
+    toast(`${refsToDelete.length} duplicado${refsToDelete.length>1?'s':''} eliminado${refsToDelete.length>1?'s':''}. Reportes actualizados.`,'success');
+    closeDedupModal();
+    // Refresh iframe
+    setTimeout(()=>{ const f=document.getElementById('repFrame'); if(f) f.src=f.src; },1000);
+  } catch(e) {
+    toast('Error: '+e.message,'error');
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fa-solid fa-trash"></i> Eliminar seleccionados';
+  }
+};
