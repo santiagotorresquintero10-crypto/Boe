@@ -5508,3 +5508,36 @@ window.eliminarDuplicados = async () => {
     btn.innerHTML = '<i class="fa-solid fa-trash"></i> Eliminar seleccionados';
   }
 };
+
+/* ══════════════════════════════════════════════════
+   BORRAR TODAS LAS FACTURAS — RESET REPORTES
+══════════════════════════════════════════════════ */
+window.borrarTodasFacturas = async () => {
+  const confirm1 = confirm('Vas a eliminar TODAS las facturas de Reportes.\n\nEsto no afecta Clientes, UROEXPERTOS, Turnos ni ningún otro módulo.\n\n¿Continuar?');
+  if (!confirm1) return;
+  const confirm2 = confirm('SEGUNDA CONFIRMACIÓN\n\nEsta acción es IRREVERSIBLE.\n\n¿Estás seguro?');
+  if (!confirm2) return;
+
+  const btn = document.getElementById('btnBorrarFacturas');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Borrando...'; }
+
+  try {
+    let total = 0;
+    // Get all in batches
+    while (true) {
+      const snap = await getDocs(collection(db,'facturas'));
+      if (!snap.docs.length) break;
+      await Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
+      total += snap.docs.length;
+      if (btn) btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Borrando... ${total}`;
+      if (snap.docs.length < 100) break; // Firestore returns max 100 by default with getDocs
+    }
+    toast(`${total} facturas eliminadas. Ahora puedes importar desde cero.`, 'success');
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-trash"></i> Borrar todas las facturas'; }
+    // Refresh iframe
+    setTimeout(()=>{ const f=document.getElementById('repFrame'); if(f) f.src=f.src; }, 800);
+  } catch(e) {
+    toast('Error: '+e.message, 'error');
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-trash"></i> Borrar todas las facturas'; }
+  }
+};
