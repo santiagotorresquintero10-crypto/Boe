@@ -1752,14 +1752,15 @@ let editingFactId = null;
 /* Suscripción — cuando cambian facturas, avisar al iframe */
 let _facturasDebounce = null;
 function subscribeFacturas() {
+  // Use query without orderBy as primary — orderBy excludes docs without createdAt
   onSnapshot(
-    query(collection(db,'facturas'), orderBy('createdAt','desc')),
+    collection(db,'facturas'),
     snap => {
-      // Debounce: wait 800ms after last change before notifying iframe
-      // This prevents partial updates during bulk import
       clearTimeout(_facturasDebounce);
       _facturasDebounce = setTimeout(() => {
-        const facturas = snap.docs.map(d => ({id:d.id,...d.data()}));
+        const facturas = snap.docs
+          .map(d => ({id:d.id,...d.data()}))
+          .sort((a,b) => (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0));
         const frame = document.getElementById('repFrame');
         if (frame?.contentWindow) {
           frame.contentWindow.postMessage({
@@ -1779,14 +1780,14 @@ window.addEventListener('message', e => {
     const frame = document.getElementById('repFrame');
     if (!frame?.contentWindow) return;
 
-    // Fetch facturas y doctors directamente de Firestore para garantizar que llegan
     Promise.all([
-      getDocs(query(collection(db,'facturas'), orderBy('createdAt','desc'))),
-      getDocs(query(collection(db,'doctors'),  orderBy('createdAt','desc'))),
+      getDocs(collection(db,'facturas')),
+      getDocs(collection(db,'doctors')),
     ]).then(([factSnap, docSnap]) => {
-      const facturas = factSnap.docs.map(d=>({id:d.id,...d.data()}));
-      const docsList = docSnap.docs.map(d=>({id:d.id,...d.data(),nombre:d.data().nombre,especialidad:d.data().especialidad}));
-      // Actualizar array global también
+      const facturas = factSnap.docs
+        .map(d=>({id:d.id,...d.data()}))
+        .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+      const docsList = docSnap.docs.map(d=>({id:d.id,...d.data()}));
       if (docsList.length) doctors = docsList;
       frame.contentWindow.postMessage({
         type: 'FACTURAS_UPDATE',
@@ -1794,7 +1795,6 @@ window.addEventListener('message', e => {
         doctors: docsList.map(d=>({id:d.id, nombre:d.nombre, especialidad:d.especialidad}))
       }, '*');
     });
-    // Enviar estilos de doctores guardados
     sendDoctorStyles(frame);
   }
   // Guardar estilo de doctor desde el iframe
@@ -2168,13 +2168,15 @@ window.confirmarImport = async function() {
   btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Guardando…';
 
   try {
-    // Si reemplazar: borrar registros del mismo mes/año antes
+    // Si reemplazar: borrar SOLO registros del mismo médico + mes/año
     if (replace) {
-      const mesesAnios = [...new Set(importData.map(r => `${r.anio}_${r.mes}`))];
-      const snapExist  = await getDocs(collection(db,'facturas'));
-      const toDelete   = snapExist.docs.filter(d => {
+      // Group by doctorId + mes + año
+      const claves = new Set(importData.map(r => `${r.doctorId||''}_${r.anio}_${r.mes}`));
+      const snapExist = await getDocs(collection(db,'facturas'));
+      const toDelete  = snapExist.docs.filter(d => {
         const data = d.data();
-        return mesesAnios.includes(`${data.anio}_${data.mes}`);
+        // Must match doctorId AND mes AND año — never delete other doctors
+        return claves.has(`${data.doctorId||''}_${data.anio}_${data.mes}`);
       });
       await Promise.all(toDelete.map(d => deleteDoc(d.ref)));
     }
