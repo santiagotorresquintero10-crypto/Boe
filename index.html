@@ -1116,6 +1116,37 @@
 </div>
 
 <!-- MODAL: NUEVA FILA EN TABLA PERSONALIZADA -->
+<!-- MODAL ENVIAR CORREO -->
+<div class="modal-overlay" id="enviarModal">
+  <div class="modal" style="max-width:560px">
+    <div class="modal-head">
+      <h3><i class="fa-solid fa-paper-plane" style="color:#2e7d32;margin-right:8px"></i>Enviar por Correo</h3>
+      <button class="modal-x" onclick="closeEnviarModal()"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="modal-body">
+      <div style="background:var(--gray-0);border:1px solid var(--gray-1);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:13px">
+        <div style="display:flex;gap:8px;margin-bottom:4px"><strong style="min-width:90px;color:var(--navy)">Especialista:</strong><span id="envEspecialista">—</span></div>
+        <div style="display:flex;gap:8px;margin-bottom:4px"><strong style="min-width:90px;color:var(--navy)">Destinatario:</strong><span id="envCorreo" style="color:var(--blue);font-weight:600">—</span></div>
+        <div style="display:flex;gap:8px"><strong style="min-width:90px;color:var(--navy)">Adjunto:</strong><span id="envAdjunto" style="color:#2e7d32">—</span></div>
+      </div>
+      <div class="fg" style="margin-bottom:12px">
+        <label>Asunto</label>
+        <input type="text" id="envAsunto" value="Información de facturación UroExpertos"/>
+      </div>
+      <div class="fg">
+        <label>Mensaje</label>
+        <textarea id="envMensaje" rows="4">Buen día, adjuntamos la información correspondiente para su revisión.</textarea>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeEnviarModal()">Cancelar</button>
+      <button class="btn btn-primary" id="btnEnviarCorreo" onclick="enviarCorreoFila()" style="background:linear-gradient(135deg,#2e7d32,#1b5e20)">
+        <i class="fa-solid fa-paper-plane"></i> Enviar correo
+      </button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="tablaRowModal">
   <div class="modal modal-xl">
     <div class="modal-head">

@@ -3690,6 +3690,7 @@ function renderCustomTables() {
         <td>
           <div class="tbl-actions">
             <button class="act-btn edit" onclick="openTablaRowModal('${t.id}',${realIdx})"><i class="fa-solid fa-pen"></i></button>
+            <button class="act-btn" style="background:#e8f5e9;color:#2e7d32" title="Enviar por correo" onclick="openEnviarModal('${t.id}',${realIdx})"><i class="fa-solid fa-paper-plane"></i></button>
             <button class="act-btn del" onclick="deleteTablaRow('${t.id}',${realIdx})"><i class="fa-solid fa-trash"></i></button>
           </div>
         </td>
@@ -5539,5 +5540,126 @@ window.borrarTodasFacturas = async () => {
   } catch(e) {
     toast('Error: '+e.message, 'error');
     if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-trash"></i> Borrar todas las facturas'; }
+  }
+};
+
+/* ══════════════════════════════════════════════════
+   ENVIAR CORREO — TABLAS HIJAS UROEXPERTOS
+══════════════════════════════════════════════════ */
+
+let _envContext = null; // {tablaId, idx, fila, especialista, correo}
+
+window.openEnviarModal = (tablaId, idx) => {
+  const tabla = tablasEgreso.find(t=>t.id===tablaId);
+  const fila  = tabla?.filas?.[idx];
+  if (!fila) { toast('No se encontró el registro.','error'); return; }
+
+  // Validar: información en la fila
+  if (!fila.nombre) {
+    toast('No es posible enviar el correo, falta información requerida (especialista).','error');
+    return;
+  }
+
+  // Buscar especialista en Clientes y su correo
+  const doctor = doctors.find(d => d.especialista === fila.nombre);
+  const correo = doctor?.correo?.trim() || '';
+
+  if (!correo) {
+    toast(`No es posible enviar: ${fila.nombre} no tiene correo registrado en Clientes.`,'error');
+    return;
+  }
+
+  _envContext = { tablaId, idx, fila, especialista: fila.nombre, correo, tablaNombre: tabla.nombre||'' };
+
+  document.getElementById('envEspecialista').textContent = fila.nombre;
+  document.getElementById('envCorreo').textContent = correo;
+  const fechaStr = new Date().toISOString().slice(0,10);
+  const nombreLimpio = fila.nombre.replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ\s]/g,'').replace(/\s+/g,'_');
+  document.getElementById('envAdjunto').textContent = `Facturacion_${nombreLimpio}_${fechaStr}.xlsx`;
+  document.getElementById('envAsunto').value = 'Información de facturación UroExpertos';
+  document.getElementById('envMensaje').value = 'Buen día, adjuntamos la información correspondiente para su revisión.';
+
+  document.getElementById('enviarModal').classList.add('open');
+};
+
+window.closeEnviarModal = () => {
+  document.getElementById('enviarModal').classList.remove('open');
+  _envContext = null;
+};
+
+/* Generar Excel del registro como base64 */
+function generarAdjuntoFila(fila, tablaNombre) {
+  if (!window.XLSX) throw new Error('SheetJS no disponible');
+  const fmtNum = v => v ? Number(v) : 0;
+
+  const headers = ['CAMPO','VALOR'];
+  const rows = [
+    ['Tabla / IPS',          tablaNombre||''],
+    ['Factura',              fila.factura||''],
+    ['Mes',                  fila.mes||''],
+    ['Nombre Especialista',  fila.nombre||''],
+    ['Valor Factura',        fmtNum(fila.valorFactura)],
+    ['Abono',                fmtNum(fila.abono)],
+    ['Glosa',                fmtNum(fila.glosa)],
+    ['Rete Fuente',          fmtNum(fila.reteFuente)],
+    ['AFC',                  fmtNum(fila.afc)],
+    ['Residentes',           fmtNum(fila.residentes)],
+    ['Tiquetes',             fmtNum(fila.tiquetes)],
+    ['Hotel',                fmtNum(fila.hotel)],
+    ['Transporte',           fmtNum(fila.transporte)],
+    ['VALOR A PAGAR',        fmtNum(fila.valorPagar)],
+  ];
+
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+  ws['!cols'] = [{wch:22},{wch:28}];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Facturación');
+
+  // Generate as base64
+  return XLSX.write(wb, { bookType:'xlsx', type:'base64' });
+}
+
+window.enviarCorreoFila = async () => {
+  if (!_envContext) return;
+  const { fila, especialista, correo, tablaNombre } = _envContext;
+
+  const asunto  = document.getElementById('envAsunto').value.trim();
+  const mensaje = document.getElementById('envMensaje').value.trim();
+  if (!asunto) { toast('El asunto es obligatorio.','error'); return; }
+
+  const btn = document.getElementById('btnEnviarCorreo');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Enviando...';
+
+  try {
+    // Generar adjunto
+    const base64 = generarAdjuntoFila(fila, tablaNombre);
+    const fechaStr = new Date().toISOString().slice(0,10);
+    const nombreLimpio = especialista.replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ\s]/g,'').replace(/\s+/g,'_');
+    const attachmentName = `Facturacion_${nombreLimpio}_${fechaStr}.xlsx`;
+
+    // Llamar a la función serverless
+    const resp = await fetch('/api/send-email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        to: correo,
+        subject: asunto,
+        message: mensaje,
+        attachmentBase64: base64,
+        attachmentName,
+      }),
+    });
+
+    const data = await resp.json();
+    if (!resp.ok || !data.ok) throw new Error(data.error || 'Error desconocido');
+
+    toast('Correo enviado correctamente al especialista.','success');
+    closeEnviarModal();
+  } catch(e) {
+    toast('Error al enviar correo, validar configuración o datos. ('+e.message+')','error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fa-solid fa-paper-plane"></i> Enviar correo';
   }
 };
