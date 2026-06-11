@@ -5573,50 +5573,152 @@ window.openEnviarModal = (tablaId, idx) => {
 
   document.getElementById('envEspecialista').textContent = fila.nombre;
   document.getElementById('envCorreo').textContent = correo;
-  const fechaStr = new Date().toISOString().slice(0,10);
+
+  // Mes dinámico desde la fila (formato "2026-03" → "Marzo de 2026")
+  const mesLabel = mesFilaLabel(fila.mes);
+  // Fecha actual en formato legible
+  const hoy = new Date();
+  const fechaLegible = hoy.toLocaleDateString('es-CO', {day:'numeric', month:'long', year:'numeric'});
+  const fechaStr = hoy.toISOString().slice(0,10);
   const nombreLimpio = fila.nombre.replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ\s]/g,'').replace(/\s+/g,'_');
-  document.getElementById('envAdjunto').textContent = `Facturacion_${nombreLimpio}_${fechaStr}.xlsx`;
-  document.getElementById('envAsunto').value = 'Información de facturación UroExpertos';
-  document.getElementById('envMensaje').value = 'Buen día, adjuntamos la información correspondiente para su revisión.';
+
+  document.getElementById('envAdjunto').textContent = `Comprobante_Egreso_${nombreLimpio}_${fechaStr}.pdf`;
+  document.getElementById('envAsunto').value = `Notificación de pago de honorarios profesionales — ${mesLabel}`;
+  document.getElementById('envMensaje').value =
+`Estimado Dr. ${fila.nombre}, cordial saludo.
+
+Nos permitimos informar que el pago correspondiente a sus honorarios profesionales del periodo ${mesLabel} ha sido realizado exitosamente en la fecha ${fechaLegible}.
+
+Adjunto remitimos el comprobante de egreso con la información correspondiente para su validación y control.
+
+Agradecemos su compromiso, profesionalismo y valioso apoyo en la prestación de servicios.`;
 
   document.getElementById('enviarModal').classList.add('open');
 };
+
+/* Convertir "2026-03" a "Marzo de 2026" */
+function mesFilaLabel(mesVal) {
+  if (!mesVal) return '';
+  const MESES_LBL = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+  const m = String(mesVal).match(/^(\d{4})-(\d{2})$/);
+  if (m) return `${MESES_LBL[parseInt(m[2])-1]} de ${m[1]}`;
+  return String(mesVal);
+}
 
 window.closeEnviarModal = () => {
   document.getElementById('enviarModal').classList.remove('open');
   _envContext = null;
 };
 
-/* Generar Excel del registro como base64 */
+/* Generar PDF del registro como base64 — formato Comprobante de Egreso */
 function generarAdjuntoFila(fila, tablaNombre) {
-  if (!window.XLSX) throw new Error('SheetJS no disponible');
-  const fmtNum = v => v ? Number(v) : 0;
+  const { jsPDF } = window.jspdf || {};
+  if (!jsPDF) throw new Error('jsPDF no disponible. Recarga la página.');
 
-  const headers = ['CAMPO','VALOR'];
-  const rows = [
-    ['Tabla / IPS',          tablaNombre||''],
-    ['Factura',              fila.factura||''],
-    ['Mes',                  fila.mes||''],
-    ['Nombre Especialista',  fila.nombre||''],
-    ['Valor Factura',        fmtNum(fila.valorFactura)],
-    ['Abono',                fmtNum(fila.abono)],
-    ['Glosa',                fmtNum(fila.glosa)],
-    ['Rete Fuente',          fmtNum(fila.reteFuente)],
-    ['AFC',                  fmtNum(fila.afc)],
-    ['Residentes',           fmtNum(fila.residentes)],
-    ['Tiquetes',             fmtNum(fila.tiquetes)],
-    ['Hotel',                fmtNum(fila.hotel)],
-    ['Transporte',           fmtNum(fila.transporte)],
-    ['VALOR A PAGAR',        fmtNum(fila.valorPagar)],
+  const fmtV = v => '$ ' + (Number(v)||0).toLocaleString('es-CO');
+  const navy = [26, 58, 107];
+
+  const pdf = new jsPDF({ unit:'mm', format:'letter' });
+  const W = 216, M = 14;
+  let y = 16;
+
+  // ── Encabezado ──
+  pdf.setFont('courier','bold'); pdf.setFontSize(13); pdf.setTextColor(...navy);
+  pdf.text('COMPROBANTE DE EGRESO', W-M, y, {align:'right'});
+  y += 6;
+  pdf.setFontSize(9); pdf.setFont('courier','normal'); pdf.setTextColor(60);
+  pdf.text(`Fecha de Emisión: ${new Date().toLocaleDateString('es-CO')}`, W-M, y, {align:'right'});
+  y += 4;
+  pdf.setDrawColor(...navy); pdf.setLineWidth(0.8);
+  pdf.line(M, y, W-M, y);
+  y += 8;
+
+  // Helper: section header bar
+  const secHead = (titulo) => {
+    pdf.setFillColor(...navy);
+    pdf.rect(M, y-4.5, W-2*M, 6.5, 'F');
+    pdf.setFont('courier','bold'); pdf.setFontSize(8.5); pdf.setTextColor(255);
+    pdf.text(titulo, M+2, y);
+    y += 7;
+  };
+  // Helper: field row
+  const fieldRow = (label, value, bold=false) => {
+    pdf.setFont('courier', 'normal'); pdf.setFontSize(8.5); pdf.setTextColor(40);
+    pdf.text(label, M+2, y);
+    pdf.setFont('courier', bold?'bold':'normal'); pdf.setTextColor(17);
+    pdf.text(String(value||'—'), M+58, y);
+    pdf.setDrawColor(190); pdf.setLineWidth(0.2);
+    pdf.line(M+56, y+1, W-M-2, y+1);
+    y += 6;
+  };
+  // Helper: money row (right aligned)
+  const moneyRow = (label, value) => {
+    pdf.setFont('courier','normal'); pdf.setFontSize(8.5); pdf.setTextColor(40);
+    pdf.text(label, M+2, y);
+    pdf.setTextColor(17);
+    pdf.text(fmtV(value), W-M-2, y, {align:'right'});
+    pdf.setDrawColor(220); pdf.setLineWidth(0.2);
+    pdf.line(M+2, y+1.5, W-M-2, y+1.5);
+    y += 6;
+  };
+
+  // ── Información del beneficiario ──
+  secHead('INFORMACIÓN DEL BENEFICIARIO');
+  fieldRow('Nombre:', fila.nombre, true);
+  y += 2;
+
+  // ── Información del servicio ──
+  secHead('INFORMACIÓN DEL SERVICIO');
+  fieldRow('IPS:', tablaNombre);
+  fieldRow('Mes del Servicio:', mesFilaLabel(fila.mes));
+  fieldRow('N. Factura:', fila.factura);
+  y += 2;
+
+  // ── Detalle financiero ──
+  secHead('DETALLE FINANCIERO');
+  moneyRow('VALOR FACTURA:', fila.valorFactura);
+  moneyRow('(-) ABONO', fila.abono);
+  moneyRow('(-) GLOSA', fila.glosa);
+  moneyRow('(-) RETE FUENTE', fila.reteFuente);
+  moneyRow('(-) AFC', fila.afc);
+  moneyRow('(-) RESIDENTES', fila.residentes);
+  moneyRow('(-) TIQUETES', fila.tiquetes);
+  moneyRow('(-) HOTEL', fila.hotel);
+  moneyRow('(-) TRANSPORTE', fila.transporte);
+
+  // ── Valor neto a pagar (barra azul) ──
+  y += 1;
+  pdf.setFillColor(...navy);
+  pdf.rect(M, y-4.5, W-2*M, 8, 'F');
+  pdf.setFont('courier','bold'); pdf.setFontSize(10); pdf.setTextColor(255);
+  pdf.text('VALOR NETO A PAGAR', M+2, y+0.5);
+  pdf.text(fmtV(fila.valorPagar), W-M-2, y+0.5, {align:'right'});
+  y += 14;
+
+  // ── Firmas ──
+  y = Math.max(y, 200);
+  const firmaW = (W-2*M-20)/3;
+  const firmas = [
+    ['Angela Paredes','APROBADO POR'],
+    ['Rosa Castellanos','REVISADO POR'],
+    ['Angela Paredes','AUTORIZÓ PAGO'],
   ];
+  firmas.forEach((f,i) => {
+    const fx = M + i*(firmaW+10);
+    pdf.setFont('courier','normal'); pdf.setFontSize(8); pdf.setTextColor(17);
+    pdf.text(f[0], fx+firmaW/2, y, {align:'center'});
+    pdf.setDrawColor(50); pdf.setLineWidth(0.4);
+    pdf.line(fx, y+1.5, fx+firmaW, y+1.5);
+    pdf.setFontSize(7); pdf.setTextColor(90); pdf.setFont('courier','bold');
+    pdf.text(f[1], fx+firmaW/2, y+5.5, {align:'center'});
+  });
 
-  const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
-  ws['!cols'] = [{wch:22},{wch:28}];
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Facturación');
+  // Footer
+  pdf.setFont('courier','normal'); pdf.setFontSize(7); pdf.setTextColor(150);
+  pdf.text('Documento generado automáticamente — Sistema BOE UroExpertos', W/2, 268, {align:'center'});
 
-  // Generate as base64
-  return XLSX.write(wb, { bookType:'xlsx', type:'base64' });
+  // Return base64 (without the data: prefix)
+  return pdf.output('datauristring').split(',')[1];
 }
 
 window.enviarCorreoFila = async () => {
@@ -5636,7 +5738,7 @@ window.enviarCorreoFila = async () => {
     const base64 = generarAdjuntoFila(fila, tablaNombre);
     const fechaStr = new Date().toISOString().slice(0,10);
     const nombreLimpio = especialista.replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ\s]/g,'').replace(/\s+/g,'_');
-    const attachmentName = `Facturacion_${nombreLimpio}_${fechaStr}.xlsx`;
+    const attachmentName = `Comprobante_Egreso_${nombreLimpio}_${fechaStr}.pdf`;
 
     // Llamar a la función serverless
     const resp = await fetch('/api/send-email', {

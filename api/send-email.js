@@ -31,7 +31,7 @@ module.exports = async (req, res) => {
     });
 
     const mailOptions = {
-      from: `"UroExpertos Facturación" <${SMTP_USER}>`,
+      from: `"FACTURACION UROEXPERTOS" <${SMTP_USER}>`,
       to,
       subject,
       html: `
