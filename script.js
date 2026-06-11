@@ -225,7 +225,7 @@ window.navigate = (view,el) => {
   document.getElementById('view-'+view)?.classList.add('active');
   const sideItem=document.querySelector(`.nav-item[onclick*="'${view}'"]`);
   if(sideItem) sideItem.classList.add('active');
-  const labels={dashboard:'Dashboard',doctores:'Clientes',kanban:'Tablero Kanban',tareas:'Tareas',chat:'Chat del equipo',equipo:'Equipo',alertas:'Alertas',calendario:'Calendario',reportes:'Reportes',resumen:'Resumen de Procesos',egresos:'UROEXPERTOS',turnos:'Cuadro de Turnos'};
+  const labels={dashboard:'Dashboard',doctores:'Clientes',kanban:'Tablero Kanban',tareas:'Tareas',chat:'Chat del equipo',equipo:'Equipo',alertas:'Alertas',calendario:'Calendario',reportes:'Reportes',resumen:'Resumen de Procesos',egresos:'UROEXPERTOS',turnos:'Cuadro de Turnos',extraccion:'Extracción de Datos'};
   document.getElementById('breadcrumb').textContent=labels[view]||view;
   if(window.innerWidth<=768){ document.getElementById('sidebar').classList.remove('mobile-open'); document.getElementById('sidebarOverlay').classList.remove('open'); }
   if(view==='tareas') applyTareaFilters();
@@ -235,6 +235,7 @@ window.navigate = (view,el) => {
   if(view==='resumen') renderResumen();
   if(view==='egresos') initEgresos();
   if(view==='turnos') initTurnos();
+  if(view==='extraccion') extCargarListaPlantillas();
 };
 window.setBottomActive = el => { document.querySelectorAll('.bottom-nav-item').forEach(i=>i.classList.remove('active')); el.classList.add('active'); };
 window.toggleSidebar = () => {
@@ -5764,4 +5765,374 @@ window.enviarCorreoFila = async () => {
     btn.disabled = false;
     btn.innerHTML = '<i class="fa-solid fa-paper-plane"></i> Enviar correo';
   }
+};
+
+/* ══════════════════════════════════════════════════
+   EXTRACCIÓN DE DATOS — PDF a Excel (pdf.js + Tesseract OCR)
+══════════════════════════════════════════════════ */
+
+if (window.pdfjsLib) {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+}
+
+let extArchivos = [];   // [{name, data(ArrayBuffer), pdfDoc}]
+let extCampos   = [];   // [{nombre, page, rect:{x,y,w,h} normalizado 0-1}]
+let extActivo   = -1;   // índice del archivo abierto
+let extPagina   = 1;
+let extNumPags  = 1;
+let extResultados = []; // filas extraídas
+let extRenderScale = 1.4;
+
+/* ── Cargar archivos ── */
+window.extCargarArchivos = async (ev) => {
+  const files = [...(ev.target.files||[])];
+  if (!files.length) return;
+  for (const f of files) {
+    const data = await f.arrayBuffer();
+    extArchivos.push({ name: f.name, data, pdfDoc: null });
+  }
+  ev.target.value = '';
+  extRenderListaArchivos();
+  if (extActivo === -1 && extArchivos.length) extAbrirArchivo(0);
+  toast(`${files.length} PDF${files.length>1?'s':''} cargado${files.length>1?'s':''}.`,'success');
+};
+
+function extRenderListaArchivos() {
+  const cont = document.getElementById('extListaArchivos');
+  if (!extArchivos.length) {
+    cont.innerHTML = '<span style="color:var(--gray-3);font-size:12px">Sin archivos. Carga uno o varios PDF.</span>';
+    return;
+  }
+  cont.innerHTML = extArchivos.map((a,i)=>`
+    <div style="display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:6px;cursor:pointer;${i===extActivo?'background:var(--blue-pale);border:1px solid var(--blue)':'border:1px solid transparent'}"
+      onclick="extAbrirArchivo(${i})">
+      <i class="fa-solid fa-file-pdf" style="color:#c0392b;font-size:13px"></i>
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:${i===extActivo?'700':'400'};color:var(--navy)" title="${escHtml(a.name)}">${escHtml(a.name)}</span>
+      <button onclick="event.stopPropagation();extQuitarArchivo(${i})" style="border:none;background:none;color:var(--gray-3);cursor:pointer;font-size:11px;padding:2px"><i class="fa-solid fa-xmark"></i></button>
+    </div>`).join('');
+}
+
+window.extQuitarArchivo = (i) => {
+  extArchivos.splice(i,1);
+  if (extActivo === i) { extActivo = -1; extLimpiarVisor(); }
+  else if (extActivo > i) extActivo--;
+  extRenderListaArchivos();
+};
+
+function extLimpiarVisor() {
+  const canvas = document.getElementById('extCanvas');
+  canvas.width = 0; canvas.height = 0;
+  document.getElementById('extOverlay').innerHTML = '';
+  document.getElementById('extDocNombre').textContent = 'Selecciona un documento';
+  document.getElementById('extPagInfo').textContent = '— / —';
+}
+
+/* ── Abrir y renderizar PDF ── */
+window.extAbrirArchivo = async (i) => {
+  extActivo = i;
+  extPagina = 1;
+  extRenderListaArchivos();
+  const arch = extArchivos[i];
+  document.getElementById('extDocNombre').textContent = arch.name;
+  try {
+    if (!arch.pdfDoc) {
+      arch.pdfDoc = await pdfjsLib.getDocument({data: arch.data.slice(0)}).promise;
+    }
+    extNumPags = arch.pdfDoc.numPages;
+    await extRenderPagina();
+  } catch(e) {
+    toast('Error al abrir PDF: '+e.message,'error');
+  }
+};
+
+window.extCambiarPagina = async (dir) => {
+  if (extActivo === -1) return;
+  const nueva = extPagina + dir;
+  if (nueva < 1 || nueva > extNumPags) return;
+  extPagina = nueva;
+  await extRenderPagina();
+};
+
+async function extRenderPagina() {
+  const arch = extArchivos[extActivo];
+  if (!arch?.pdfDoc) return;
+  const page = await arch.pdfDoc.getPage(extPagina);
+  const viewport = page.getViewport({scale: extRenderScale});
+  const canvas = document.getElementById('extCanvas');
+  const ctx = canvas.getContext('2d');
+  canvas.width  = viewport.width;
+  canvas.height = viewport.height;
+  await page.render({canvasContext: ctx, viewport}).promise;
+  document.getElementById('extPagInfo').textContent = `${extPagina} / ${extNumPags}`;
+  extDibujarCampos();
+}
+
+/* ── Dibujar recuadros de campos existentes ── */
+function extDibujarCampos() {
+  const overlay = document.getElementById('extOverlay');
+  const canvas  = document.getElementById('extCanvas');
+  overlay.innerHTML = '';
+  extCampos.forEach((c,i) => {
+    if (c.page !== extPagina) return;
+    const div = document.createElement('div');
+    div.style.cssText = `position:absolute;border:2px solid #2e7d32;background:rgba(46,125,50,.12);border-radius:3px;pointer-events:none;
+      left:${c.rect.x*canvas.width}px;top:${c.rect.y*canvas.height}px;width:${c.rect.w*canvas.width}px;height:${c.rect.h*canvas.height}px`;
+    const lbl = document.createElement('span');
+    lbl.textContent = c.nombre;
+    lbl.style.cssText = 'position:absolute;top:-18px;left:0;background:#2e7d32;color:white;font-size:10px;font-weight:700;padding:1px 6px;border-radius:3px;white-space:nowrap;font-family:Nunito,sans-serif';
+    div.appendChild(lbl);
+    overlay.appendChild(div);
+  });
+}
+
+/* ── Selección con mouse ── */
+(function extSetupSeleccion(){
+  document.addEventListener('DOMContentLoaded', () => {
+    const wrap = document.getElementById('extCanvasWrap');
+    if (!wrap) return;
+    let selDiv = null, startX = 0, startY = 0, seleccionando = false;
+
+    wrap.addEventListener('mousedown', e => {
+      if (extActivo === -1) return;
+      const rect = wrap.getBoundingClientRect();
+      startX = e.clientX - rect.left;
+      startY = e.clientY - rect.top;
+      seleccionando = true;
+      selDiv = document.createElement('div');
+      selDiv.style.cssText = `position:absolute;border:2px dashed var(--blue);background:rgba(21,101,192,.1);left:${startX}px;top:${startY}px;width:0;height:0;pointer-events:none;z-index:10`;
+      wrap.appendChild(selDiv);
+      e.preventDefault();
+    });
+
+    wrap.addEventListener('mousemove', e => {
+      if (!seleccionando || !selDiv) return;
+      const rect = wrap.getBoundingClientRect();
+      const curX = e.clientX - rect.left;
+      const curY = e.clientY - rect.top;
+      selDiv.style.left   = Math.min(startX,curX)+'px';
+      selDiv.style.top    = Math.min(startY,curY)+'px';
+      selDiv.style.width  = Math.abs(curX-startX)+'px';
+      selDiv.style.height = Math.abs(curY-startY)+'px';
+    });
+
+    wrap.addEventListener('mouseup', e => {
+      if (!seleccionando || !selDiv) return;
+      seleccionando = false;
+      const rect = wrap.getBoundingClientRect();
+      const endX = e.clientX - rect.left;
+      const endY = e.clientY - rect.top;
+      const x = Math.min(startX,endX), y = Math.min(startY,endY);
+      const w = Math.abs(endX-startX), h = Math.abs(endY-startY);
+      selDiv.remove(); selDiv = null;
+      if (w < 8 || h < 6) return; // selección muy pequeña — ignorar
+
+      const canvas = document.getElementById('extCanvas');
+      if (!canvas.width) return;
+
+      const nombre = prompt('Nombre del campo (ej: Paciente, Valor_Total, Numero_Factura):','');
+      if (!nombre || !nombre.trim()) return;
+
+      extCampos.push({
+        nombre: nombre.trim().replace(/\s+/g,'_'),
+        page: extPagina,
+        rect: { x: x/canvas.width, y: y/canvas.height, w: w/canvas.width, h: h/canvas.height }
+      });
+      extRenderListaCampos();
+      extDibujarCampos();
+    });
+  });
+})();
+
+function extRenderListaCampos() {
+  const cont = document.getElementById('extListaCampos');
+  if (!extCampos.length) {
+    cont.innerHTML = '<span style="color:var(--gray-3);font-size:12px">Sin campos aún.</span>';
+    return;
+  }
+  cont.innerHTML = extCampos.map((c,i)=>`
+    <div style="display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:6px;background:var(--gray-0);border:1px solid var(--gray-1)">
+      <i class="fa-solid fa-tag" style="color:#2e7d32;font-size:11px"></i>
+      <span style="flex:1;font-weight:600;color:var(--navy);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(c.nombre)}</span>
+      <span style="font-size:10px;color:var(--gray-3)">pág ${c.page}</span>
+      <button onclick="extQuitarCampo(${i})" style="border:none;background:none;color:var(--red);cursor:pointer;font-size:11px;padding:2px"><i class="fa-solid fa-trash"></i></button>
+    </div>`).join('');
+}
+
+window.extQuitarCampo = (i) => {
+  extCampos.splice(i,1);
+  extRenderListaCampos();
+  extDibujarCampos();
+};
+
+/* ── Extraer texto de una región (pdf.js, con fallback OCR) ── */
+async function extExtraerRegion(pdfDoc, campo) {
+  const page = await pdfDoc.getPage(campo.page);
+  const viewport = page.getViewport({scale: extRenderScale});
+
+  // Región en coordenadas viewport
+  const rx = campo.rect.x * viewport.width;
+  const ry = campo.rect.y * viewport.height;
+  const rw = campo.rect.w * viewport.width;
+  const rh = campo.rect.h * viewport.height;
+
+  // 1) Intentar texto digital
+  const textContent = await page.getTextContent();
+  const items = [];
+  for (const item of textContent.items) {
+    if (!item.str || !item.str.trim()) continue;
+    const tx = pdfjsLib.Util.transform(viewport.transform, item.transform);
+    const ix = tx[4];
+    const iy = tx[5];
+    const ih = Math.abs(tx[3]) || 10;
+    const iw = item.width * extRenderScale;
+    // bbox del item: (ix, iy-ih) a (ix+iw, iy)
+    const cx = ix + iw/2, cy = iy - ih/2;
+    if (cx >= rx && cx <= rx+rw && cy >= ry && cy <= ry+rh) {
+      items.push({str:item.str, x:ix, y:iy});
+    }
+  }
+  if (items.length) {
+    // Ordenar por línea (y) y luego x
+    items.sort((a,b)=> Math.abs(a.y-b.y) > 4 ? a.y-b.y : a.x-b.x);
+    return items.map(i=>i.str).join(' ').replace(/\s+/g,' ').trim();
+  }
+
+  // 2) Fallback: OCR con Tesseract sobre la región renderizada
+  try {
+    const ocrScale = 2.5;
+    const vp2 = page.getViewport({scale: ocrScale});
+    const full = document.createElement('canvas');
+    full.width = vp2.width; full.height = vp2.height;
+    await page.render({canvasContext: full.getContext('2d'), viewport: vp2}).promise;
+
+    const sx = campo.rect.x * vp2.width;
+    const sy = campo.rect.y * vp2.height;
+    const sw = Math.max(4, campo.rect.w * vp2.width);
+    const sh = Math.max(4, campo.rect.h * vp2.height);
+    const crop = document.createElement('canvas');
+    crop.width = sw; crop.height = sh;
+    crop.getContext('2d').drawImage(full, sx, sy, sw, sh, 0, 0, sw, sh);
+
+    const { data } = await Tesseract.recognize(crop.toDataURL('image/png'), 'spa');
+    return (data.text||'').replace(/\s+/g,' ').trim();
+  } catch(e) {
+    console.warn('OCR fallo:', e);
+    return '';
+  }
+}
+
+/* ── Procesar todos los PDFs ── */
+window.extProcesar = async () => {
+  if (!extArchivos.length) { toast('Carga al menos un PDF.','error'); return; }
+  if (!extCampos.length)   { toast('Define al menos un campo dibujando un recuadro sobre el PDF.','error'); return; }
+
+  const btn = document.getElementById('btnExtraer');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Extrayendo...';
+
+  const resultCard = document.getElementById('extResultCard');
+  const progreso   = document.getElementById('extProgreso');
+  resultCard.style.display = 'block';
+  progreso.style.display = 'block';
+
+  extResultados = [];
+
+  try {
+    for (let i=0; i<extArchivos.length; i++) {
+      const arch = extArchivos[i];
+      progreso.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Procesando ${i+1} de ${extArchivos.length}: ${escHtml(arch.name)}`;
+      if (!arch.pdfDoc) {
+        arch.pdfDoc = await pdfjsLib.getDocument({data: arch.data.slice(0)}).promise;
+      }
+      const fila = { Archivo: arch.name };
+      for (const campo of extCampos) {
+        // Si el PDF no tiene esa página, dejar vacío
+        if (campo.page > arch.pdfDoc.numPages) { fila[campo.nombre] = ''; continue; }
+        fila[campo.nombre] = await extExtraerRegion(arch.pdfDoc, campo);
+      }
+      extResultados.push(fila);
+      extRenderResultados(); // render incremental
+    }
+    progreso.innerHTML = `<i class="fa-solid fa-circle-check" style="color:#2e7d32"></i> Extracción completada — ${extResultados.length} documento${extResultados.length>1?'s':''}.`;
+    document.getElementById('btnExtExcel').style.display = 'inline-flex';
+    toast('Extracción completada.','success');
+  } catch(e) {
+    progreso.innerHTML = `<span style="color:var(--red)">Error: ${escHtml(e.message)}</span>`;
+    toast('Error en extracción: '+e.message,'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> Extraer información';
+  }
+};
+
+function extRenderResultados() {
+  const table = document.getElementById('extResultTable');
+  if (!extResultados.length) return;
+  const cols = ['Archivo', ...extCampos.map(c=>c.nombre)];
+  table.querySelector('thead').innerHTML = '<tr>'+cols.map(c=>`<th>${escHtml(c)}</th>`).join('')+'</tr>';
+  table.querySelector('tbody').innerHTML = extResultados.map(r=>
+    '<tr>'+cols.map(c=>`<td>${escHtml(String(r[c]??''))}</td>`).join('')+'</tr>'
+  ).join('');
+}
+
+/* ── Exportar Excel ── */
+window.extExportarExcel = () => {
+  if (!extResultados.length) { toast('No hay resultados para exportar.','error'); return; }
+  const cols = ['Archivo', ...extCampos.map(c=>c.nombre)];
+  const data = [cols, ...extResultados.map(r=>cols.map(c=>r[c]??''))];
+  const ws = XLSX.utils.aoa_to_sheet(data);
+  ws['!cols'] = cols.map(()=>({wch:24}));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Extraccion');
+  XLSX.writeFile(wb, 'Extraccion_Datos.xlsx');
+};
+
+/* ── Plantillas (Firestore: extractTemplates) ── */
+window.extCargarListaPlantillas = async () => {
+  try {
+    const snap = await getDocs(collection(db,'extractTemplates'));
+    const sel = document.getElementById('extPlantillaSel');
+    const plantillas = snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''));
+    sel.innerHTML = '<option value="">— Seleccionar plantilla —</option>' +
+      plantillas.map(p=>`<option value="${escHtml(p.id)}">${escHtml(p.nombre)}</option>`).join('');
+  } catch(e) { console.warn('Plantillas:', e); }
+};
+
+window.extGuardarPlantilla = async () => {
+  if (!extCampos.length) { toast('No hay campos para guardar.','error'); return; }
+  const nombre = prompt('Nombre de la plantilla (ej: Factura Clínica):','');
+  if (!nombre || !nombre.trim()) return;
+  try {
+    await addDoc(collection(db,'extractTemplates'), {
+      nombre: nombre.trim(),
+      campos: extCampos,
+      createdAt: serverTimestamp()
+    });
+    toast('Plantilla guardada.','success');
+    extCargarListaPlantillas();
+  } catch(e) { toast('Error: '+e.message,'error'); }
+};
+
+window.extCargarPlantilla = async () => {
+  const id = document.getElementById('extPlantillaSel').value;
+  if (!id) { toast('Selecciona una plantilla.','error'); return; }
+  try {
+    const snap = await getDoc(doc(db,'extractTemplates',id));
+    if (!snap.exists()) { toast('Plantilla no encontrada.','error'); return; }
+    extCampos = snap.data().campos || [];
+    extRenderListaCampos();
+    extDibujarCampos();
+    toast(`Plantilla "${snap.data().nombre}" cargada — ${extCampos.length} campos.`,'success');
+  } catch(e) { toast('Error: '+e.message,'error'); }
+};
+
+window.extEliminarPlantilla = async () => {
+  const id = document.getElementById('extPlantillaSel').value;
+  if (!id) { toast('Selecciona una plantilla.','error'); return; }
+  if (!confirm('¿Eliminar esta plantilla?')) return;
+  try {
+    await deleteDoc(doc(db,'extractTemplates',id));
+    toast('Plantilla eliminada.','success');
+    extCargarListaPlantillas();
+  } catch(e) { toast('Error: '+e.message,'error'); }
 };
