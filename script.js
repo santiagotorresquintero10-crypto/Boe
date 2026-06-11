@@ -5932,13 +5932,24 @@ function extDibujarCampos() {
       const nombre = prompt('Nombre del campo (ej: Paciente, Valor_Total, Numero_Factura):','');
       if (!nombre || !nombre.trim()) return;
 
-      extCampos.push({
+      const nuevoCampo = {
         nombre: nombre.trim().replace(/\s+/g,'_'),
         page: extPagina,
-        rect: { x: x/canvas.width, y: y/canvas.height, w: w/canvas.width, h: h/canvas.height }
-      });
+        rect: { x: x/canvas.width, y: y/canvas.height, w: w/canvas.width, h: h/canvas.height },
+        anchor: null
+      };
+      extCampos.push(nuevoCampo);
       extRenderListaCampos();
       extDibujarCampos();
+      // Capturar etiqueta-ancla cercana (async) para tolerar PDFs desplazados
+      (async () => {
+        try {
+          const arch = extArchivos[extActivo];
+          if (!arch?.pdfDoc) return;
+          const items = await extItemsPagina(arch.pdfDoc, nuevoCampo.page, 'ref'+extActivo);
+          nuevoCampo.anchor = extBuscarAncla(items, nuevoCampo.rect);
+        } catch(e) { /* sin ancla — usará tolerancia vertical */ }
+      })();
     });
   });
 })();
@@ -5964,51 +5975,114 @@ window.extQuitarCampo = (i) => {
   extDibujarCampos();
 };
 
-/* ── Extraer texto de una región (pdf.js, con fallback OCR) ── */
-async function extExtraerRegion(pdfDoc, campo) {
-  const page = await pdfDoc.getPage(campo.page);
-  const viewport = page.getViewport({scale: extRenderScale});
+/* ── Texto normalizado para comparar anclas ── */
+function extNorm(s){
+  return (s||'').toString().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim();
+}
 
-  // Región en coordenadas viewport
-  const rx = campo.rect.x * viewport.width;
-  const ry = campo.rect.y * viewport.height;
-  const rw = campo.rect.w * viewport.width;
-  const rh = campo.rect.h * viewport.height;
-
-  // 1) Intentar texto digital
-  const textContent = await page.getTextContent();
+/* ── Items de texto de una página en coords normalizadas 0-1 (origen sup-izq) ── */
+const _extItemsCache = new Map();
+async function extItemsPagina(pdfDoc, pageNum, cacheKey) {
+  const key = cacheKey+'_p'+pageNum;
+  if (_extItemsCache.has(key)) return _extItemsCache.get(key);
+  const page = await pdfDoc.getPage(pageNum);
+  const viewport = page.getViewport({scale: 1});
+  const tc = await page.getTextContent();
   const items = [];
-  for (const item of textContent.items) {
+  for (const item of tc.items) {
     if (!item.str || !item.str.trim()) continue;
     const tx = pdfjsLib.Util.transform(viewport.transform, item.transform);
-    const ix = tx[4];
-    const iy = tx[5];
-    const ih = Math.abs(tx[3]) || 10;
-    const iw = item.width * extRenderScale;
-    // bbox del item: (ix, iy-ih) a (ix+iw, iy)
-    const cx = ix + iw/2, cy = iy - ih/2;
-    if (cx >= rx && cx <= rx+rw && cy >= ry && cy <= ry+rh) {
-      items.push({str:item.str, x:ix, y:iy});
+    const h = Math.abs(tx[3]) || 10;
+    items.push({
+      str: item.str,
+      x: tx[4]/viewport.width,
+      y: (tx[5]-h)/viewport.height,
+      w: (item.width||0)/viewport.width,
+      h: h/viewport.height,
+    });
+  }
+  _extItemsCache.set(key, items);
+  return items;
+}
+
+/* ── Buscar etiqueta-ancla cercana a un rect (a la izquierda, misma línea) ── */
+function extBuscarAncla(items, rect) {
+  const cy0 = rect.y + rect.h/2;
+  let best = null, bestDist = 1e9;
+  items.forEach(it => {
+    const cy = it.y + it.h/2;
+    const enBanda  = Math.abs(cy - cy0) <= Math.max(rect.h, 0.02);
+    const izquierda = (it.x + it.w) <= rect.x + 0.012;
+    if (enBanda && izquierda && extNorm(it.str).length >= 3) {
+      const d = (rect.x - (it.x + it.w)) + Math.abs(cy - cy0) * 4;
+      if (d < bestDist) { bestDist = d; best = it; }
+    }
+  });
+  if (best) return { text: best.str.trim(), x: best.x, y: best.y };
+  return null;
+}
+
+/* ── Texto digital dentro de un rect normalizado ── */
+function extTextoEnRect(items, rect) {
+  const sel = items.filter(it => {
+    const cx = it.x + it.w/2, cy = it.y + it.h/2;
+    return cx >= rect.x && cx <= rect.x+rect.w && cy >= rect.y && cy <= rect.y+rect.h;
+  });
+  if (!sel.length) return '';
+  sel.sort((a,b) => Math.abs(a.y-b.y) > 0.008 ? a.y-b.y : a.x-b.x);
+  return sel.map(s=>s.str).join(' ').replace(/\s+/g,' ').trim();
+}
+
+/* ── Extraer texto de una región — con anclaje por etiqueta y tolerancia ── */
+async function extExtraerRegion(pdfDoc, campo, cacheKey) {
+  const items = await extItemsPagina(pdfDoc, campo.page, cacheKey);
+  const rects = [];
+
+  // 1) Rect anclado: localizar la etiqueta y desplazar el rect según su nueva posición
+  if (campo.anchor?.text) {
+    const normA = extNorm(campo.anchor.text);
+    const matches = items.filter(it => extNorm(it.str) === normA);
+    if (matches.length) {
+      matches.sort((a,b) =>
+        (Math.abs(a.x-campo.anchor.x)+Math.abs(a.y-campo.anchor.y)) -
+        (Math.abs(b.x-campo.anchor.x)+Math.abs(b.y-campo.anchor.y))
+      );
+      const m = matches[0];
+      rects.push({
+        x: campo.rect.x + (m.x - campo.anchor.x),
+        y: campo.rect.y + (m.y - campo.anchor.y),
+        w: campo.rect.w, h: campo.rect.h
+      });
     }
   }
-  if (items.length) {
-    // Ordenar por línea (y) y luego x
-    items.sort((a,b)=> Math.abs(a.y-b.y) > 4 ? a.y-b.y : a.x-b.x);
-    return items.map(i=>i.str).join(' ').replace(/\s+/g,' ').trim();
+
+  // 2) Rect original + barridos verticales de tolerancia (PDFs que se corren)
+  rects.push(campo.rect);
+  [0.01,-0.01,0.02,-0.02,0.035,-0.035,0.05,-0.05].forEach(dy => {
+    rects.push({ x:campo.rect.x, y:campo.rect.y+dy, w:campo.rect.w, h:campo.rect.h });
+  });
+
+  // Probar cada candidato con texto digital
+  for (const r of rects) {
+    const txt = extTextoEnRect(items, r);
+    if (txt) return txt;
   }
 
-  // 2) Fallback: OCR con Tesseract sobre la región renderizada
+  // 3) Fallback OCR sobre el mejor rect disponible (anclado u original) con margen extra
   try {
+    const base = rects[0];
+    const page = await pdfDoc.getPage(campo.page);
     const ocrScale = 2.5;
     const vp2 = page.getViewport({scale: ocrScale});
     const full = document.createElement('canvas');
     full.width = vp2.width; full.height = vp2.height;
     await page.render({canvasContext: full.getContext('2d'), viewport: vp2}).promise;
 
-    const sx = campo.rect.x * vp2.width;
-    const sy = campo.rect.y * vp2.height;
-    const sw = Math.max(4, campo.rect.w * vp2.width);
-    const sh = Math.max(4, campo.rect.h * vp2.height);
+    const margen = 0.012; // pequeño margen alrededor para tolerar corrimiento
+    const sx = Math.max(0,(base.x-margen)) * vp2.width;
+    const sy = Math.max(0,(base.y-margen)) * vp2.height;
+    const sw = Math.max(4,(base.w+margen*2) * vp2.width);
+    const sh = Math.max(4,(base.h+margen*2) * vp2.height);
     const crop = document.createElement('canvas');
     crop.width = sw; crop.height = sh;
     crop.getContext('2d').drawImage(full, sx, sy, sw, sh, 0, 0, sw, sh);
@@ -6036,6 +6110,7 @@ window.extProcesar = async () => {
   progreso.style.display = 'block';
 
   extResultados = [];
+  _extItemsCache.clear();
 
   try {
     for (let i=0; i<extArchivos.length; i++) {
@@ -6048,7 +6123,7 @@ window.extProcesar = async () => {
       for (const campo of extCampos) {
         // Si el PDF no tiene esa página, dejar vacío
         if (campo.page > arch.pdfDoc.numPages) { fila[campo.nombre] = ''; continue; }
-        fila[campo.nombre] = await extExtraerRegion(arch.pdfDoc, campo);
+        fila[campo.nombre] = await extExtraerRegion(arch.pdfDoc, campo, 'doc'+i);
       }
       extResultados.push(fila);
       extRenderResultados(); // render incremental
