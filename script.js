@@ -6026,84 +6026,244 @@ async function extItemsPagina(pdfDoc, pageNum, cacheKey) {
   return items;
 }
 
-/* ── Buscar etiqueta-ancla cercana a un rect (a la izquierda, misma línea) ── */
-function extBuscarAncla(items, rect) {
-  const cy0 = rect.y + rect.h/2;
-  let best = null, bestDist = 1e9;
-  items.forEach(it => {
+/* ── Reconstruir líneas: agrupa items por Y y ordena por X ──
+   Soluciona la fragmentación variable de pdf.js entre formatos */
+function extLineas(items){
+  const lineas = [];
+  const sorted = [...items].sort((a,b)=> a.y-b.y || a.x-b.x);
+  sorted.forEach(it=>{
     const cy = it.y + it.h/2;
-    const enBanda  = Math.abs(cy - cy0) <= Math.max(rect.h, 0.02);
-    const izquierda = (it.x + it.w) <= rect.x + 0.012;
-    if (enBanda && izquierda && extNorm(it.str).length >= 3) {
-      const d = (rect.x - (it.x + it.w)) + Math.abs(cy - cy0) * 4;
-      if (d < bestDist) { bestDist = d; best = it; }
-    }
+    let L = lineas.find(l => Math.abs(l.cy - cy) < Math.max(it.h*0.6, 0.006));
+    if (!L){ L = {cy, items:[]}; lineas.push(L); }
+    L.items.push(it);
   });
-  if (best) return { text: best.str.trim(), x: best.x, y: best.y };
+  lineas.forEach(L=> L.items.sort((a,b)=>a.x-b.x));
+  lineas.sort((a,b)=>a.cy-b.cy);
+  return lineas;
+}
+
+/* ── Localizar una etiqueta dentro de las líneas (matching difuso multifragmento) ──
+   Encuentra "nombre cirujano:" aunque venga partido en varios items
+   o pegado al valor en un mismo item ("FOLIO: 17").
+   Devuelve {linea, xFin, y} donde xFin = coordenada donde TERMINA la etiqueta. */
+function extLocalizarEtiqueta(lineas, etiquetaNorm){
+  if (!etiquetaNorm || etiquetaNorm.length < 3) return null;
+  for (const L of lineas){
+    let concat = '';
+    const map = [];   // por cada caracter de concat: {item, frac}
+    for (const it of L.items){
+      const s = extNorm(it.str);
+      for (let k=0; k<s.length; k++) map.push({item:it, frac:(k+1)/Math.max(s.length,1)});
+      concat += s;
+      concat += ' '; map.push({item:it, frac:1});
+    }
+    const idx = concat.indexOf(etiquetaNorm);
+    if (idx !== -1){
+      const endRef = map[Math.min(idx + etiquetaNorm.length - 1, map.length-1)];
+      if (!endRef) continue;
+      const it = endRef.item;
+      const xFin = it.x + it.w * Math.min(1, endRef.frac);
+      return { linea: L, xFin, y: it.y, h: it.h };
+    }
+  }
   return null;
 }
 
-/* ── Texto digital dentro de un rect normalizado ── */
+/* ── ¿Un texto parece una nueva etiqueta? ("Sexo:", "Fecha Nacimiento:") ── */
+function extEsEtiqueta(s){
+  const t = (s||'').trim();
+  return /:$/.test(t) || /^[A-ZÁÉÍÓÚÑ][\wÁÉÍÓÚÑáéíóúñ\.\s\/]{1,32}:(\s|$)/.test(t);
+}
+
+/* ── Extraer el valor a la DERECHA de una etiqueta localizada,
+   cortando en la siguiente etiqueta de la misma línea ── */
+function extCortarEtiquetaInterna(s){
+  // Corta "23/05/2026 14:22 Area Servicio:" → "23/05/2026 14:22"
+  const m = s.match(/\s+[A-ZÁÉÍÓÚÑ][^:]{1,30}:(\s|$)/);
+  return m ? { texto: s.slice(0, m.index).trim(), corte: true }
+           : { texto: s.trim(), corte: false };
+}
+
+function extValorDerecha(loc, anchoMax){
+  const out = [];
+  for (const it of loc.linea.items){
+    const itFin = it.x + it.w;
+    if (itFin <= loc.xFin + 0.002) continue;          // antes del fin de la etiqueta
+    if (anchoMax && it.x > loc.xFin + anchoMax) break; // fuera del ancho esperado
+
+    let texto = '';
+    if (it.x < loc.xFin - 0.001){
+      // etiqueta y valor comparten item → substring proporcional
+      const frac = (loc.xFin - it.x)/Math.max(it.w, 1e-6);
+      const cut = Math.round(frac * it.str.length);
+      texto = it.str.slice(cut).replace(/^[\s:]+/,'').trim();
+    } else {
+      texto = it.str.trim();
+    }
+    if (!texto) continue;                              // ignorar items vacíos/espacios
+
+    if (out.length && extEsEtiqueta(texto)) break;     // item siguiente es nueva etiqueta
+
+    const { texto: limpio, corte } = extCortarEtiquetaInterna(texto);
+    if (limpio) out.push(limpio);
+    if (corte) break;                                  // etiqueta interna → fin del valor
+  }
+  return out.join(' ').replace(/\s+/g,' ').trim();
+}
+
+/* ── Extraer el valor DEBAJO de una etiqueta (Hallazgos:, Informe:, etc.) ── */
+function extValorDebajo(lineas, loc, rect){
+  const x1 = Math.max(0, (rect?.x ?? loc.xFin - 0.02) - 0.02);
+  const x2 = Math.min(1, x1 + Math.max(rect?.w ?? 0.5, 0.25) + 0.04);
+  const yBase = loc.y + loc.h;
+  const partes = [];
+  let lineasTomadas = 0;
+  for (const L of lineas){
+    if (L.cy <= yBase) continue;
+    if (lineasTomadas >= 3) break;             // máx 3 líneas de valor
+    const enRango = L.items.filter(it => (it.x+it.w) > x1 && it.x < x2);
+    if (!enRango.length) break;
+    if (extEsEtiqueta(enRango[0].str) && lineasTomadas > 0) break;
+    if (extEsEtiqueta(enRango[0].str) && enRango.length === 1) break;
+    partes.push(enRango.map(i=>i.str.trim()).join(' '));
+    lineasTomadas++;
+    if (L.cy - yBase > 0.06) break;            // no alejarse demasiado
+  }
+  return partes.join(' ').replace(/\s+/g,' ').trim();
+}
+
+/* ── Texto digital dentro de un rect — por INTERSECCIÓN proporcional
+   (extrae substring si el item solo cae parcialmente dentro: "FOLIO: 17") ── */
 function extTextoEnRect(items, rect) {
-  const sel = items.filter(it => {
-    const cx = it.x + it.w/2, cy = it.y + it.h/2;
-    return cx >= rect.x && cx <= rect.x+rect.w && cy >= rect.y && cy <= rect.y+rect.h;
+  const sel = [];
+  items.forEach(it => {
+    const cy = it.y + it.h/2;
+    if (cy < rect.y || cy > rect.y + rect.h) return;
+    const ov1 = Math.max(it.x, rect.x);
+    const ov2 = Math.min(it.x + it.w, rect.x + rect.w);
+    if (ov2 - ov1 <= 0) return;
+    const f1 = (ov1 - it.x)/Math.max(it.w, 1e-6);
+    const f2 = (ov2 - it.x)/Math.max(it.w, 1e-6);
+    const c1 = Math.floor(f1 * it.str.length);
+    const c2 = Math.ceil (f2 * it.str.length);
+    const sub = it.str.slice(c1, c2).trim();
+    if (sub) sel.push({str: sub, x: ov1, y: it.y});
   });
   if (!sel.length) return '';
   sel.sort((a,b) => Math.abs(a.y-b.y) > 0.008 ? a.y-b.y : a.x-b.x);
   return sel.map(s=>s.str).join(' ').replace(/\s+/g,' ').trim();
 }
 
-/* ── Extraer texto de una región — con anclaje por etiqueta y tolerancia ── */
-async function extExtraerRegion(pdfDoc, campo, cacheKey) {
-  const items = await extItemsPagina(pdfDoc, campo.page, cacheKey);
-  const rects = [];
+/* ── Buscar etiqueta-ancla cercana a un rect — izquierda o arriba ── */
+function extBuscarAncla(items, rect) {
+  const cy0 = rect.y + rect.h/2;
+  // 1) Izquierda, misma línea
+  let best = null, bestDist = 1e9;
+  items.forEach(it => {
+    const cy = it.y + it.h/2;
+    const enBanda   = Math.abs(cy - cy0) <= Math.max(rect.h, 0.02);
+    const izquierda = (it.x + it.w) <= rect.x + 0.012;
+    if (enBanda && izquierda && extNorm(it.str).length >= 3) {
+      const d = (rect.x - (it.x + it.w)) + Math.abs(cy - cy0) * 4;
+      if (d < bestDist) { bestDist = d; best = it; }
+    }
+  });
+  if (best) return { text: best.str.trim(), x: best.x, y: best.y, pos: 'left' };
 
-  // 1) Rect anclado: localizar la etiqueta y desplazar el rect según su nueva posición
+  // 2) Item que CONTIENE el borde izquierdo del rect (etiqueta+valor mismo item)
+  let cont = null;
+  items.forEach(it => {
+    const cy = it.y + it.h/2;
+    if (Math.abs(cy - cy0) > Math.max(rect.h, 0.02)) return;
+    if (it.x < rect.x - 0.005 && (it.x + it.w) > rect.x) cont = cont || it;
+  });
+  if (cont){
+    const frac = (rect.x - cont.x)/Math.max(cont.w, 1e-6);
+    const etiqueta = cont.str.slice(0, Math.round(frac * cont.str.length)).trim();
+    if (etiqueta.length >= 3) return { text: etiqueta, x: cont.x, y: cont.y, pos: 'left' };
+  }
+
+  // 3) Arriba (valor debajo de la etiqueta: "Hallazgos:")
+  best = null; bestDist = 1e9;
+  items.forEach(it => {
+    const itBottom = it.y + it.h;
+    const arriba = itBottom <= rect.y + 0.005 && (rect.y - itBottom) < 0.04;
+    const solapaX = (it.x + it.w) > rect.x - 0.02 && it.x < rect.x + rect.w;
+    if (arriba && solapaX && extNorm(it.str).length >= 3){
+      const d = (rect.y - itBottom) + Math.abs(it.x - rect.x);
+      if (d < bestDist){ bestDist = d; best = it; }
+    }
+  });
+  if (best) return { text: best.str.trim(), x: best.x, y: best.y, pos: 'above' };
+  return null;
+}
+
+/* ── MOTOR DE EXTRACCIÓN v2 — estrategia en cascada ── */
+async function extExtraerRegion(pdfDoc, campo, cacheKey) {
+  const etiquetaNorm = campo.anchor?.text ? extNorm(campo.anchor.text) : '';
+  const anchoMax = Math.max((campo.rect.w||0.2) * 2.5, 0.25);
+
+  /* Estrategia A: ancla exacta + rect desplazado (rápida, formatos idénticos) */
+  const items = await extItemsPagina(pdfDoc, campo.page, cacheKey);
   if (campo.anchor?.text) {
-    const normA = extNorm(campo.anchor.text);
-    const matches = items.filter(it => extNorm(it.str) === normA);
+    const matches = items.filter(it => extNorm(it.str) === etiquetaNorm);
     if (matches.length) {
       matches.sort((a,b) =>
         (Math.abs(a.x-campo.anchor.x)+Math.abs(a.y-campo.anchor.y)) -
         (Math.abs(b.x-campo.anchor.x)+Math.abs(b.y-campo.anchor.y))
       );
       const m = matches[0];
-      rects.push({
+      const r = {
         x: campo.rect.x + (m.x - campo.anchor.x),
         y: campo.rect.y + (m.y - campo.anchor.y),
         w: campo.rect.w, h: campo.rect.h
-      });
+      };
+      const txt = extTextoEnRect(items, r);
+      if (txt) return txt;
     }
   }
 
-  // 2) Rect original + barridos verticales de tolerancia (PDFs que se corren)
-  rects.push(campo.rect);
-  [0.01,-0.01,0.02,-0.02,0.035,-0.035,0.05,-0.05].forEach(dy => {
+  /* Estrategia B: etiqueta difusa por líneas — misma página, luego TODAS */
+  if (etiquetaNorm) {
+    const paginas = [campo.page];
+    for (let p=1; p<=pdfDoc.numPages; p++) if (p !== campo.page) paginas.push(p);
+    for (const p of paginas) {
+      const its = await extItemsPagina(pdfDoc, p, cacheKey);
+      const lineas = extLineas(its);
+      const loc = extLocalizarEtiqueta(lineas, etiquetaNorm);
+      if (loc) {
+        const txt = (campo.anchor?.pos === 'above')
+          ? extValorDebajo(lineas, loc, campo.rect)
+          : extValorDerecha(loc, anchoMax);
+        if (txt) return txt;
+      }
+    }
+  }
+
+  /* Estrategia C: rect original + barridos verticales amplios (±8%) */
+  const rects = [campo.rect];
+  [0.01,-0.01,0.02,-0.02,0.035,-0.035,0.05,-0.05,0.065,-0.065,0.08,-0.08].forEach(dy => {
     rects.push({ x:campo.rect.x, y:campo.rect.y+dy, w:campo.rect.w, h:campo.rect.h });
   });
-
-  // Probar cada candidato con texto digital
   for (const r of rects) {
     const txt = extTextoEnRect(items, r);
     if (txt) return txt;
   }
 
-  // 3) Fallback OCR sobre el mejor rect disponible (anclado u original) con margen extra
+  /* Estrategia D: OCR sobre el rect con margen (escaneados) */
   try {
-    const base = rects[0];
     const page = await pdfDoc.getPage(campo.page);
-    const ocrScale = 2.5;
+    const ocrScale = 3;
     const vp2 = page.getViewport({scale: ocrScale});
     const full = document.createElement('canvas');
     full.width = vp2.width; full.height = vp2.height;
     await page.render({canvasContext: full.getContext('2d'), viewport: vp2}).promise;
 
-    const margen = 0.012; // pequeño margen alrededor para tolerar corrimiento
-    const sx = Math.max(0,(base.x-margen)) * vp2.width;
-    const sy = Math.max(0,(base.y-margen)) * vp2.height;
-    const sw = Math.max(4,(base.w+margen*2) * vp2.width);
-    const sh = Math.max(4,(base.h+margen*2) * vp2.height);
+    const margen = 0.012;
+    const sx = Math.max(0,(campo.rect.x-margen)) * vp2.width;
+    const sy = Math.max(0,(campo.rect.y-margen)) * vp2.height;
+    const sw = Math.max(4,(campo.rect.w+margen*2) * vp2.width);
+    const sh = Math.max(4,(campo.rect.h+margen*2) * vp2.height);
     const crop = document.createElement('canvas');
     crop.width = sw; crop.height = sh;
     crop.getContext('2d').drawImage(full, sx, sy, sw, sh, 0, 0, sw, sh);
