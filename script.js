@@ -3691,7 +3691,7 @@ function renderCustomTables() {
         <td>
           <div class="tbl-actions">
             <button class="act-btn edit" onclick="openTablaRowModal('${t.id}',${realIdx})"><i class="fa-solid fa-pen"></i></button>
-            <button class="act-btn" style="background:#e8f5e9;color:#2e7d32" title="Enviar por correo" onclick="openEnviarModal('${t.id}',${realIdx})"><i class="fa-solid fa-paper-plane"></i></button>
+            <button class="act-btn" style="${f.correoEnviado?'background:#e8f5e9;color:#2e7d32':'background:var(--blue-pale);color:var(--blue)'}" title="${f.correoEnviado?'Correo enviado — reenviar':'Enviar por correo'}" onclick="openEnviarModal('${t.id}',${realIdx})"><i class="fa-solid ${f.correoEnviado?'fa-circle-check':'fa-paper-plane'}"></i></button>
             <button class="act-btn del" onclick="deleteTablaRow('${t.id}',${realIdx})"><i class="fa-solid fa-trash"></i></button>
           </div>
         </td>
@@ -5764,6 +5764,19 @@ window.enviarCorreoFila = async () => {
 
     const data = await resp.json();
     if (!resp.ok || !data.ok) throw new Error(data.error || 'Error desconocido');
+
+    // Marcar la fila como enviada en Firestore (botón pasa a verde)
+    try {
+      const { tablaId, idx } = _envContext;
+      const tabla = tablasEgreso.find(t=>t.id===tablaId);
+      if (tabla) {
+        const filas = [...(tabla.filas||[])];
+        if (filas[idx]) {
+          filas[idx] = { ...filas[idx], correoEnviado: true, correoFecha: new Date().toISOString() };
+          await updateDoc(doc(db,'tablasEgreso',tablaId), { filas, updatedAt: serverTimestamp() });
+        }
+      }
+    } catch(e2) { console.warn('No se pudo marcar fila como enviada:', e2); }
 
     toast('Correo enviado correctamente al especialista.','success');
     closeEnviarModal();
