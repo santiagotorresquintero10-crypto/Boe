@@ -6232,3 +6232,24 @@ window.extEliminarPlantilla = async () => {
     extCargarListaPlantillas();
   } catch(e) { toast('Error: '+e.message,'error'); }
 };
+
+/* ══════════════════════════════════════════════════
+   PRINT FIX REPORTES — Delegar Ctrl+P al iframe
+   (el @page A4 landscape vive dentro del iframe;
+   imprimir desde el padre saldría vertical)
+══════════════════════════════════════════════════ */
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p') {
+    const repActivo = document.getElementById('view-reportes')?.classList.contains('active');
+    // Solo interceptar si Reportes es la vista activa y no hay modales abiertos
+    const modalAbierto = document.querySelector('.modal-overlay.open');
+    if (repActivo && !modalAbierto) {
+      e.preventDefault();
+      const frame = document.getElementById('repFrame');
+      if (frame?.contentWindow) {
+        frame.contentWindow.focus();
+        frame.contentWindow.print();
+      }
+    }
+  }
+});

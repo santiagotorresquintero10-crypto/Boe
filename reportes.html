@@ -23,10 +23,9 @@
       .no-print{ display:none!important; }
 
       .report-doc{
-        width:100%!important; max-width:100%!important;
+        width:277mm!important; max-width:277mm!important;
         box-shadow:none!important; border-radius:0!important;
         overflow:visible!important;
-        page-break-inside:avoid!important; break-inside:avoid!important;
       }
 
       /* KPIs: reducir altura */
@@ -38,7 +37,6 @@
       .charts-row{ gap:5px!important; padding:8px 12px 10px!important; }
       .chart-panel{ box-shadow:none!important; border:1px solid #dde!important;
         page-break-inside:avoid!important; break-inside:avoid!important; }
-      .chart-panel canvas{ height:auto!important; }
 
       /* Header más compacto */
       .rep-header-print{ padding:8px 14px!important; }
@@ -472,6 +470,47 @@ function App(){
   );
 }
 ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+<script>
+/* ══ PRINT FIX — re-render de charts al ancho de hoja A4 landscape ══ */
+(function(){
+  const PRINT_W = 1040;           /* ~277mm a 96dpi */
+  const CAP_ENTIDADES = 300;      /* alto máximo gráfica entidades en print */
+  const CAP_MENSUAL   = 215;      /* alto máximo gráfica mensual en print */
+  let saved = [];
+
+  function eachChart(fn){
+    document.querySelectorAll('.chart-panel canvas').forEach((cv,i)=>{
+      const chart = (window.Chart && Chart.getChart) ? Chart.getChart(cv) : null;
+      if (chart) fn(cv, chart, i);
+    });
+  }
+
+  window.addEventListener('beforeprint', ()=>{
+    saved = [];
+    eachChart((cv, chart, i)=>{
+      const wrap = cv.parentElement;
+      saved.push({ wrap, h: wrap.style.height, w: wrap.style.width });
+      const capH = i===0
+        ? Math.min(parseInt(wrap.style.height)||CAP_ENTIDADES, CAP_ENTIDADES)
+        : CAP_MENSUAL;
+      wrap.style.width  = PRINT_W + 'px';
+      wrap.style.height = capH + 'px';
+      chart.resize();
+    });
+  });
+
+  window.addEventListener('afterprint', ()=>{
+    saved.forEach(s=>{
+      s.wrap.style.height = s.h;
+      s.wrap.style.width  = s.w;
+      const cv = s.wrap.querySelector('canvas');
+      const chart = cv && Chart.getChart ? Chart.getChart(cv) : null;
+      if (chart) chart.resize();
+    });
+    saved = [];
+  });
+})();
 </script>
 </body>
 </html>
