@@ -5969,6 +5969,7 @@ function extDibujarCampos() {
           if (!arch?.pdfDoc) return;
           const items = await extItemsPagina(arch.pdfDoc, nuevoCampo.page, 'ref'+extActivo);
           nuevoCampo.anchor = extBuscarAncla(items, nuevoCampo.rect);
+          nuevoCampo.sample = extTextoEnRect(items, nuevoCampo.rect) || '';
         } catch(e) { /* sin ancla — usará tolerancia vertical */ }
       })();
     });
@@ -6198,14 +6199,104 @@ function extBuscarAncla(items, rect) {
   return null;
 }
 
+/* ── OCR de página completa con posiciones de palabras (cache) ── */
+const _extOcrCache = new Map();
+async function extOcrPagina(pdfDoc, pageNum, cacheKey){
+  const key = cacheKey+'_ocr'+pageNum;
+  if (_extOcrCache.has(key)) return _extOcrCache.get(key);
+  const page = await pdfDoc.getPage(pageNum);
+  const vp = page.getViewport({scale: 2.2});
+  const cv = document.createElement('canvas');
+  cv.width = vp.width; cv.height = vp.height;
+  await page.render({canvasContext: cv.getContext('2d'), viewport: vp}).promise;
+  const { data } = await Tesseract.recognize(cv.toDataURL('image/png'), 'spa');
+  const items = (data.words||[])
+    .filter(w => w.text && w.text.trim() && w.confidence > 30)
+    .map(w => ({
+      str: w.text,
+      x: w.bbox.x0/vp.width,  y: w.bbox.y0/vp.height,
+      w: (w.bbox.x1-w.bbox.x0)/vp.width, h: (w.bbox.y1-w.bbox.y0)/vp.height,
+    }));
+  _extOcrCache.set(key, items);
+  return items;
+}
+
+/* ── Localizar etiqueta con tolerancia a errores de OCR ── */
+function extLocalizarEtiquetaAprox(lineas, etiquetaNorm){
+  let loc = extLocalizarEtiqueta(lineas, etiquetaNorm);
+  if (loc) return loc;
+  // Fallback: primera palabra significativa de la etiqueta (>=4 chars)
+  const palabras = etiquetaNorm.replace(/:/g,'').split(' ').filter(p=>p.length>=4);
+  for (const p of palabras){
+    loc = extLocalizarEtiqueta(lineas, p);
+    if (loc) return loc;
+  }
+  return null;
+}
+
+/* ── Inferir tipo de dato a partir de la muestra capturada al crear el campo ── */
+function extInferirTipo(sample){
+  const s = (sample||'').trim();
+  if (!s) return 'texto';
+  if (/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/.test(s)) return 'fecha';
+  const digitos = (s.match(/\d/g)||[]).length;
+  if (digitos >= 4 && digitos / Math.max(s.replace(/\s/g,'').length,1) > 0.6) return 'numero';
+  return 'texto';
+}
+
+/* ── Limpieza y validación del valor extraído ── */
+function extLimpiarValor(raw, campo){
+  let s = (raw||'').replace(/\s+/g,' ').trim();
+  if (!s) return '';
+
+  // 1) Quitar basura en los bordes ("): valor", "=j ...")
+  s = s.replace(/^[^\wÁÉÍÓÚÑáéíóúñ$(\d]+/,'').replace(/[\s:;,\.\-_|=]+$/,'').trim();
+
+  // 2) Quitar eco de la etiqueta si quedó incluida
+  if (campo?.anchor?.text){
+    const a = campo.anchor.text.replace(/[:\s]+$/,'');
+    if (a.length >= 4){
+      const rx = new RegExp(a.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'gi');
+      s = s.replace(rx,' ').replace(/\s+/g,' ').trim();
+    }
+  }
+
+  // 3) Colapsar duplicación exacta ("ALIANZA ... ALIANZA ...")
+  const m = s.match(/^(.{6,}?)\s+\1$/);
+  if (m) s = m[1].trim();
+
+  // 4) Validación por tipo según la muestra del campo
+  const tipo = extInferirTipo(campo?.sample);
+  if (tipo === 'fecha'){
+    const f = s.match(/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}(\s+\d{1,2}:\d{2})?/);
+    if (f) return f[0];
+  }
+  if (tipo === 'numero'){
+    const runs = s.match(/\d[\d\.]{3,}/g);
+    if (runs && runs.length){
+      runs.sort((a,b)=>b.length-a.length);
+      return runs[0];
+    }
+  }
+
+  // 5) Cortar etiqueta colgante al final ("... o Civil: z" → "...")
+  const lm = s.match(/\s+[A-ZÁÉÍÓÚÑ][\wáéíóúñÁÉÍÓÚÑ]{2,24}:(\s|$)/);
+  if (lm && lm.index > 3) s = s.slice(0, lm.index).trim();
+
+  // 6) Cortar conectores sueltos al final ("... o", "... del")
+  s = s.replace(/\s+(o|y|de|del|la|el)$/i,'').trim();
+  return s;
+}
+
 /* ── MOTOR DE EXTRACCIÓN v2 — estrategia en cascada ── */
 async function extExtraerRegion(pdfDoc, campo, cacheKey) {
   const etiquetaNorm = campo.anchor?.text ? extNorm(campo.anchor.text) : '';
   const anchoMax = Math.max((campo.rect.w||0.2) * 2.5, 0.25);
+  const limpiar = raw => extLimpiarValor(raw, campo);
 
-  /* Estrategia A: ancla exacta + rect desplazado (rápida, formatos idénticos) */
+  /* Estrategia A: ancla exacta + rect desplazado (formatos idénticos) */
   const items = await extItemsPagina(pdfDoc, campo.page, cacheKey);
-  if (campo.anchor?.text) {
+  if (campo.anchor?.text && items.length) {
     const matches = items.filter(it => extNorm(it.str) === etiquetaNorm);
     if (matches.length) {
       matches.sort((a,b) =>
@@ -6219,38 +6310,72 @@ async function extExtraerRegion(pdfDoc, campo, cacheKey) {
         w: campo.rect.w, h: campo.rect.h
       };
       const txt = extTextoEnRect(items, r);
-      if (txt) return txt;
+      if (txt) return limpiar(txt);
     }
   }
 
   /* Estrategia B: etiqueta difusa por líneas — misma página, luego TODAS */
-  if (etiquetaNorm) {
+  if (etiquetaNorm && items.length) {
     const paginas = [campo.page];
     for (let p=1; p<=pdfDoc.numPages; p++) if (p !== campo.page) paginas.push(p);
     for (const p of paginas) {
       const its = await extItemsPagina(pdfDoc, p, cacheKey);
+      if (!its.length) continue;
       const lineas = extLineas(its);
       const loc = extLocalizarEtiqueta(lineas, etiquetaNorm);
       if (loc) {
         const txt = (campo.anchor?.pos === 'above')
           ? extValorDebajo(lineas, loc, campo.rect)
           : extValorDerecha(loc, anchoMax);
-        if (txt) return txt;
+        if (txt) return limpiar(txt);
       }
     }
   }
 
-  /* Estrategia C: rect original + barridos verticales amplios (±8%) */
-  const rects = [campo.rect];
-  [0.01,-0.01,0.02,-0.02,0.035,-0.035,0.05,-0.05,0.065,-0.065,0.08,-0.08].forEach(dy => {
-    rects.push({ x:campo.rect.x, y:campo.rect.y+dy, w:campo.rect.w, h:campo.rect.h });
-  });
-  for (const r of rects) {
-    const txt = extTextoEnRect(items, r);
-    if (txt) return txt;
+  /* Estrategia C: rect original + barridos verticales (digital) */
+  if (items.length) {
+    const rects = [campo.rect];
+    [0.01,-0.01,0.02,-0.02,0.035,-0.035,0.05,-0.05,0.065,-0.065,0.08,-0.08].forEach(dy => {
+      rects.push({ x:campo.rect.x, y:campo.rect.y+dy, w:campo.rect.w, h:campo.rect.h });
+    });
+    for (const r of rects) {
+      const txt = extTextoEnRect(items, r);
+      if (txt) return limpiar(txt);
+    }
   }
 
-  /* Estrategia D: OCR sobre el rect con margen (escaneados) */
+  /* ══ DOCUMENTO ESCANEADO (sin capa de texto) ══
+     OCR de página completa → mismas estrategias de etiquetas sobre las palabras OCR */
+  const esEscaneado = items.length < 5;
+  if (esEscaneado) {
+    try {
+      const ocrItems = await extOcrPagina(pdfDoc, campo.page, cacheKey);
+      if (ocrItems.length) {
+        /* D1: etiqueta (con tolerancia a errores OCR) sobre palabras OCR */
+        if (etiquetaNorm) {
+          const lineas = extLineas(ocrItems);
+          const loc = extLocalizarEtiquetaAprox(lineas, etiquetaNorm);
+          if (loc) {
+            const txt = (campo.anchor?.pos === 'above')
+              ? extValorDebajo(lineas, loc, campo.rect)
+              : extValorDerecha(loc, anchoMax);
+            if (txt) return limpiar(txt);
+          }
+        }
+        /* D2: rect + barridos sobre palabras OCR */
+        const rects = [campo.rect];
+        [0.015,-0.015,0.03,-0.03,0.05,-0.05,0.08,-0.08].forEach(dy => {
+          rects.push({ x:campo.rect.x, y:campo.rect.y+dy, w:campo.rect.w, h:campo.rect.h });
+        });
+        for (const r of rects) {
+          const txt = extTextoEnRect(ocrItems, r);
+          if (txt) return limpiar(txt);
+        }
+      }
+    } catch(e) { console.warn('OCR pagina completa fallo:', e); }
+  }
+
+  /* Estrategia E: OCR del recuadro con margen (último recurso) */
   try {
     const page = await pdfDoc.getPage(campo.page);
     const ocrScale = 3;
@@ -6269,7 +6394,7 @@ async function extExtraerRegion(pdfDoc, campo, cacheKey) {
     crop.getContext('2d').drawImage(full, sx, sy, sw, sh, 0, 0, sw, sh);
 
     const { data } = await Tesseract.recognize(crop.toDataURL('image/png'), 'spa');
-    return (data.text||'').replace(/\s+/g,' ').trim();
+    return limpiar((data.text||''));
   } catch(e) {
     console.warn('OCR fallo:', e);
     return '';
@@ -6292,6 +6417,7 @@ window.extProcesar = async () => {
 
   extResultados = [];
   _extItemsCache.clear();
+  _extOcrCache.clear();
 
   try {
     for (let i=0; i<extArchivos.length; i++) {
