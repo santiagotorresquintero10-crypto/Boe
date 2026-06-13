@@ -6244,15 +6244,23 @@ function extInferirTipo(sample){
   return 'texto';
 }
 
-/* ── Limpieza y validación del valor extraído ── */
+/* ── Limpieza profunda del valor extraído ── */
 function extLimpiarValor(raw, campo){
   let s = (raw||'').replace(/\s+/g,' ').trim();
   if (!s) return '';
 
-  // 1) Quitar basura en los bordes ("): valor", "=j ...")
-  s = s.replace(/^[^\wÁÉÍÓÚÑáéíóúñ$(\d]+/,'').replace(/[\s:;,\.\-_|=]+$/,'').trim();
+  // 1) Basura en bordes: símbolos, guiones largos, corchetes, "_"
+  s = s.replace(/^[\s:;,\.\)\(\]\[\{\}\-_=|¡!«»"'—–]+/,'')
+       .replace(/[\s:;,\.\-_=|—–"'\[\(\{]+$/,'').trim();
 
-  // 2) Quitar eco de la etiqueta si quedó incluida
+  // 2) Cortar en guion largo si lo que sigue parece basura/etiqueta
+  const dash = s.split(/\s+[—–]\s*/);
+  if (dash.length > 1 && dash[0].length >= 4) s = dash[0].trim();
+
+  // 3) Quitar fragmentos con corchetes ("[Direcci [B")
+  s = s.replace(/\[[^\]]*$/g,'').replace(/[\[\]]/g,' ').replace(/\s+/g,' ').trim();
+
+  // 4) Quitar eco de la etiqueta del campo
   if (campo?.anchor?.text){
     const a = campo.anchor.text.replace(/[:\s]+$/,'');
     if (a.length >= 4){
@@ -6261,40 +6269,99 @@ function extLimpiarValor(raw, campo){
     }
   }
 
-  // 3) Colapsar duplicación exacta ("ALIANZA ... ALIANZA ...")
+  // 5) Colapsar duplicación exacta
   const m = s.match(/^(.{6,}?)\s+\1$/);
   if (m) s = m[1].trim();
 
-  // 4) Validación por tipo según la muestra del campo
+  // 6) Extracción dirigida por tipo (la puntuación valida después)
   const tipo = extInferirTipo(campo?.sample);
   if (tipo === 'fecha'){
     const f = s.match(/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}(\s+\d{1,2}:\d{2})?/);
     if (f) return f[0];
   }
   if (tipo === 'numero'){
-    const runs = s.match(/\d[\d\.]{3,}/g);
-    if (runs && runs.length){
-      runs.sort((a,b)=>b.length-a.length);
-      return runs[0];
-    }
+    // Conservar prefijo alfabético pegado al número (P00272, U39143)
+    const runs = s.match(/[A-Za-z]{0,3}\d[\d\.]{2,}/g);
+    if (runs && runs.length){ runs.sort((a,b)=>b.length-a.length); return runs[0]; }
   }
 
-  // 5) Cortar etiqueta colgante al final ("... o Civil: z" → "...")
-  const lm = s.match(/\s+[A-ZÁÉÍÓÚÑ][\wáéíóúñÁÉÍÓÚÑ]{2,24}:(\s|$)/);
-  if (lm && lm.index > 3) s = s.slice(0, lm.index).trim();
+  // 7) Cortar etiquetas de formulario conocidas aunque no tengan ":"
+  const lm1 = s.match(/\s+(Direcci\w*|Estado\s*Civil|Sexo|Edad|Tel[eé]fono|Ocupaci\w*|Procedencia|Parentesco|Plan(\s+Beneficios)?|Area(\s+Servicio)?|Detalle\w*|Finalidad|Fecha\s+(Nacimiento|Ingreso|Folio))\b.*$/i);
+  if (lm1 && lm1.index > 3) s = s.slice(0, lm1.index).trim();
 
-  // 6) Cortar conectores sueltos al final ("... o", "... del")
+  // 8) Cortar etiqueta colgante genérica "Algo: x"
+  const lm2 = s.match(/\s+[A-ZÁÉÍÓÚÑ][\wáéíóúñÁÉÍÓÚÑ]{2,24}:(\s|$)/);
+  if (lm2 && lm2.index > 3) s = s.slice(0, lm2.index).trim();
+
+  // 9) Si el valor es mayormente MAYÚSCULAS, quitar palabras minúsculas colgantes (basura OCR: "oltero")
+  const mayus = (s.match(/\b[A-ZÁÉÍÓÚÑ]{2,}\b/g)||[]).length;
+  if (mayus >= 2){
+    let prev;
+    do { prev = s; s = s.replace(/\s+[a-záéíóúñ][\wáéíóúñ]*$/,'').trim(); } while (s !== prev && s.length > 4);
+  }
+
+  // 10) Conectores sueltos al final
   s = s.replace(/\s+(o|y|de|del|la|el)$/i,'').trim();
   return s;
 }
 
-/* ── MOTOR DE EXTRACCIÓN v2 — estrategia en cascada ── */
+/* ── Puntuación de coherencia: ¿el valor corresponde realmente al campo? ── */
+function extPuntuar(valor, campo){
+  if (!valor) return 0;
+  const tipo = extInferirTipo(campo?.sample);
+
+  if (tipo === 'fecha')
+    return /\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/.test(valor) ? 5 : 0;
+
+  if (tipo === 'numero'){
+    const run = valor.match(/\d{3,}/);
+    if (!run) return 0;
+    let score = 4;
+    const sl = (campo.sample.match(/\d/g)||[]).length;
+    if (Math.abs(sl - run[0].length) <= 2) score = 5;  // largo similar a la muestra
+    return score;
+  }
+
+  // texto
+  const letras = (valor.match(/[A-Za-zÁÉÍÓÚÑáéíóúñ]/g)||[]).length;
+  if (letras < 3) return 1;
+  let score = 3;
+  if (/[{}|=_]/.test(valor)) score -= 1;          // restos de basura
+  if (valor.length >= 6) score += 1;
+  if (campo?.sample && Math.abs(valor.length - campo.sample.length) <= campo.sample.length) score += 0; 
+  return score;
+}
+
+/* ── Binarización de canvas para OCR más preciso en escaneados ── */
+function extBinarizar(canvas){
+  try {
+    const ctx = canvas.getContext('2d');
+    const img = ctx.getImageData(0,0,canvas.width,canvas.height);
+    const d = img.data;
+    for (let i=0;i<d.length;i+=4){
+      const g = d[i]*0.299 + d[i+1]*0.587 + d[i+2]*0.114;
+      const v = g > 170 ? 255 : g < 95 ? 0 : (g-95)*255/75;
+      d[i]=d[i+1]=d[i+2]=v;
+    }
+    ctx.putImageData(img,0,0);
+  } catch(e){}
+  return canvas;
+}
+
+/* ── MOTOR DE EXTRACCIÓN v4 — candidatos con puntuación de coherencia ── */
 async function extExtraerRegion(pdfDoc, campo, cacheKey) {
   const etiquetaNorm = campo.anchor?.text ? extNorm(campo.anchor.text) : '';
   const anchoMax = Math.max((campo.rect.w||0.2) * 2.5, 0.25);
-  const limpiar = raw => extLimpiarValor(raw, campo);
 
-  /* Estrategia A: ancla exacta + rect desplazado (formatos idénticos) */
+  let best = { txt:'', score:-1 };
+  const considerar = (raw) => {
+    const v = extLimpiarValor(raw, campo);
+    const s = extPuntuar(v, campo);
+    if (s > best.score) best = { txt:v, score:s };
+    return s >= 4;   // suficientemente coherente → detener cascada
+  };
+
+  /* A: ancla exacta + rect desplazado */
   const items = await extItemsPagina(pdfDoc, campo.page, cacheKey);
   if (campo.anchor?.text && items.length) {
     const matches = items.filter(it => extNorm(it.str) === etiquetaNorm);
@@ -6304,17 +6371,15 @@ async function extExtraerRegion(pdfDoc, campo, cacheKey) {
         (Math.abs(b.x-campo.anchor.x)+Math.abs(b.y-campo.anchor.y))
       );
       const m = matches[0];
-      const r = {
-        x: campo.rect.x + (m.x - campo.anchor.x),
-        y: campo.rect.y + (m.y - campo.anchor.y),
-        w: campo.rect.w, h: campo.rect.h
-      };
+      const r = { x: campo.rect.x + (m.x - campo.anchor.x),
+                  y: campo.rect.y + (m.y - campo.anchor.y),
+                  w: campo.rect.w, h: campo.rect.h };
       const txt = extTextoEnRect(items, r);
-      if (txt) return limpiar(txt);
+      if (txt && considerar(txt)) return best.txt;
     }
   }
 
-  /* Estrategia B: etiqueta difusa por líneas — misma página, luego TODAS */
+  /* B: etiqueta difusa por líneas — misma página, luego todas */
   if (etiquetaNorm && items.length) {
     const paginas = [campo.page];
     for (let p=1; p<=pdfDoc.numPages; p++) if (p !== campo.page) paginas.push(p);
@@ -6327,12 +6392,12 @@ async function extExtraerRegion(pdfDoc, campo, cacheKey) {
         const txt = (campo.anchor?.pos === 'above')
           ? extValorDebajo(lineas, loc, campo.rect)
           : extValorDerecha(loc, anchoMax);
-        if (txt) return limpiar(txt);
+        if (txt && considerar(txt)) return best.txt;
       }
     }
   }
 
-  /* Estrategia C: rect original + barridos verticales (digital) */
+  /* C: rect original + barridos (digital) */
   if (items.length) {
     const rects = [campo.rect];
     [0.01,-0.01,0.02,-0.02,0.035,-0.035,0.05,-0.05,0.065,-0.065,0.08,-0.08].forEach(dy => {
@@ -6340,18 +6405,16 @@ async function extExtraerRegion(pdfDoc, campo, cacheKey) {
     });
     for (const r of rects) {
       const txt = extTextoEnRect(items, r);
-      if (txt) return limpiar(txt);
+      if (txt && considerar(txt)) return best.txt;
     }
   }
 
-  /* ══ DOCUMENTO ESCANEADO (sin capa de texto) ══
-     OCR de página completa → mismas estrategias de etiquetas sobre las palabras OCR */
+  /* D: documento escaneado → OCR de página completa + etiquetas */
   const esEscaneado = items.length < 5;
   if (esEscaneado) {
     try {
       const ocrItems = await extOcrPagina(pdfDoc, campo.page, cacheKey);
       if (ocrItems.length) {
-        /* D1: etiqueta (con tolerancia a errores OCR) sobre palabras OCR */
         if (etiquetaNorm) {
           const lineas = extLineas(ocrItems);
           const loc = extLocalizarEtiquetaAprox(lineas, etiquetaNorm);
@@ -6359,27 +6422,25 @@ async function extExtraerRegion(pdfDoc, campo, cacheKey) {
             const txt = (campo.anchor?.pos === 'above')
               ? extValorDebajo(lineas, loc, campo.rect)
               : extValorDerecha(loc, anchoMax);
-            if (txt) return limpiar(txt);
+            if (txt && considerar(txt)) return best.txt;
           }
         }
-        /* D2: rect + barridos sobre palabras OCR */
         const rects = [campo.rect];
         [0.015,-0.015,0.03,-0.03,0.05,-0.05,0.08,-0.08].forEach(dy => {
           rects.push({ x:campo.rect.x, y:campo.rect.y+dy, w:campo.rect.w, h:campo.rect.h });
         });
         for (const r of rects) {
           const txt = extTextoEnRect(ocrItems, r);
-          if (txt) return limpiar(txt);
+          if (txt && considerar(txt)) return best.txt;
         }
       }
     } catch(e) { console.warn('OCR pagina completa fallo:', e); }
   }
 
-  /* Estrategia E: OCR del recuadro con margen (último recurso) */
+  /* E: OCR del recuadro con margen (último recurso) */
   try {
     const page = await pdfDoc.getPage(campo.page);
-    const ocrScale = 3;
-    const vp2 = page.getViewport({scale: ocrScale});
+    const vp2 = page.getViewport({scale: 3});
     const full = document.createElement('canvas');
     full.width = vp2.width; full.height = vp2.height;
     await page.render({canvasContext: full.getContext('2d'), viewport: vp2}).promise;
@@ -6392,13 +6453,14 @@ async function extExtraerRegion(pdfDoc, campo, cacheKey) {
     const crop = document.createElement('canvas');
     crop.width = sw; crop.height = sh;
     crop.getContext('2d').drawImage(full, sx, sy, sw, sh, 0, 0, sw, sh);
+    extBinarizar(crop);
 
     const { data } = await Tesseract.recognize(crop.toDataURL('image/png'), 'spa');
-    return limpiar((data.text||''));
-  } catch(e) {
-    console.warn('OCR fallo:', e);
-    return '';
-  }
+    considerar(data.text||'');
+  } catch(e) { console.warn('OCR fallo:', e); }
+
+  /* Mejor candidato (o vacío si todos incoherentes) */
+  return best.score > 0 ? best.txt : '';
 }
 
 /* ── Procesar todos los PDFs ── */
