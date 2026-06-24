@@ -236,7 +236,35 @@ window.navigate = (view,el) => {
   if(view==='egresos') initEgresos();
   if(view==='turnos') initTurnos();
   if(view==='extraccion') extCargarListaPlantillas();
+  if(view==='reportes') reenviarDatosReportes();
 };
+
+/* Reenviar datos al iframe de Reportes cada vez que se entra a la vista
+   (el iframe puede haber enviado IFRAME_READY antes de que los datos
+    estuvieran disponibles, perdiéndose el primer envío) */
+async function reenviarDatosReportes() {
+  const frame = document.getElementById('repFrame');
+  if (!frame?.contentWindow) return;
+  try {
+    const [factSnap, docSnap] = await Promise.all([
+      getDocs(collection(db,'facturas')),
+      getDocs(collection(db,'doctors')),
+    ]);
+    const facturas = factSnap.docs
+      .map(d=>({id:d.id,...d.data()}))
+      .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0));
+    const docsList = docSnap.docs.map(d=>({id:d.id,...d.data()}));
+    if (docsList.length) doctors = docsList;
+    frame.contentWindow.postMessage({
+      type: 'FACTURAS_UPDATE',
+      facturas,
+      doctors: docsList.map(d=>({id:d.id, nombre:d.nombre, especialidad:d.especialidad}))
+    }, '*');
+    sendDoctorStyles(frame);
+  } catch(e) {
+    console.warn('No se pudieron reenviar datos a Reportes:', e);
+  }
+}
 window.setBottomActive = el => { document.querySelectorAll('.bottom-nav-item').forEach(i=>i.classList.remove('active')); el.classList.add('active'); };
 window.toggleSidebar = () => {
   const sb=document.getElementById('sidebar'), sh=document.getElementById('appShell'), ov=document.getElementById('sidebarOverlay');
