@@ -191,31 +191,6 @@ function App(){
   const[filtAnio,  setFiltAnio]  = useState(anioHoy);
   const[filtMes,   setFiltMes]   = useState(mesHoy);
   const[filtDoctor,setFiltDoctor]= useState('');
-
-  /* Auto-detectar mes más reciente con datos si el filtro actual no tiene */
-  const autoDetectRef = useRef(false);
-  useEffect(()=>{
-    if (autoDetectRef.current || !facturas.length) return;
-    // ¿Hay datos para el filtro actual?
-    const hayDatos = facturas.some(f => String(f.anio)===filtAnio && f.mes===filtMes);
-    if (hayDatos) { autoDetectRef.current = true; return; }
-    // Buscar el mes/año más reciente con datos
-    const mesesConDatos = {};
-    facturas.forEach(f => {
-      if (!f.anio || !f.mes) return;
-      const idx = MESES.indexOf(f.mes);
-      if (idx === -1) return;
-      const key = `${f.anio}-${String(idx).padStart(2,'0')}`;
-      mesesConDatos[key] = { anio: String(f.anio), mes: f.mes };
-    });
-    const keys = Object.keys(mesesConDatos).sort();
-    if (keys.length) {
-      const ultimo = mesesConDatos[keys[keys.length - 1]];
-      setFiltAnio(ultimo.anio);
-      setFiltMes(ultimo.mes);
-    }
-    autoDetectRef.current = true;
-  },[facturas]);
   const[color,     setColor]     = useState('#1a3a6b');
   const[logoURL,   setLogoURL]   = useState('');
   const[title,     setTitle]     = useState('Back Office Empresarial');
@@ -235,6 +210,27 @@ function App(){
     window.parent.postMessage({type:'IFRAME_READY'},'*');
     return()=>window.removeEventListener('message',h);
   },[]);
+
+  /* Auto-detectar mes más reciente con datos si el filtro actual está vacío */
+  const autoDetectRef = useRef(false);
+  useEffect(()=>{
+    if(autoDetectRef.current || !facturas.length) return;
+    const hayDatos = facturas.some(f => String(f.anio)===filtAnio && f.mes===filtMes);
+    if(hayDatos){ autoDetectRef.current = true; return; }
+    const mesesConDatos = {};
+    facturas.forEach(f => {
+      if(!f.anio || !f.mes) return;
+      const idx = MESES.indexOf(f.mes);
+      if(idx === -1) return;
+      mesesConDatos[`${f.anio}-${String(idx).padStart(2,'0')}`] = { anio:String(f.anio), mes:f.mes };
+    });
+    const keys = Object.keys(mesesConDatos).sort();
+    if(keys.length){
+      const u = mesesConDatos[keys[keys.length-1]];
+      setFiltAnio(u.anio); setFiltMes(u.mes);
+    }
+    autoDetectRef.current = true;
+  },[facturas]);
 
   useEffect(()=>{
     const resize=()=>setTimeout(()=>{ try{ Object.values(window.Chart?.instances||{}).forEach(c=>c?.resize?.()); }catch(e){} },250);
