@@ -6051,12 +6051,183 @@ window.extQuitarCampo = (i) => {
   extDibujarCampos();
 };
 
-/* ── Texto normalizado para comparar anclas ── */
+/* ═══════════════════════════════════════════════════════════════
+   MOTOR DE EXTRACCIÓN v5 — extracción por contenido y contexto
+   ─────────────────────────────────────────────────────────────
+   Arquitectura:
+   1. Localización por ETIQUETAS con sinónimos (no por coordenadas)
+   2. Tipado semántico del campo (fecha/dinero/id/código/teléfono/texto)
+   3. Extracción dirigida por tipo con expresiones regulares
+   4. Cascada de estrategias con puntaje de confianza (gate)
+   5. OCR con worker compartido (una sola inicialización)
+   6. Validaciones post-extracción con advertencias visibles
+═══════════════════════════════════════════════════════════════ */
+
+/* ── Normalización de texto para comparaciones ── */
 function extNorm(s){
-  return (s||'').toString().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim();
+  return (s||'').toString().toLowerCase().normalize('NFD')
+    .replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim();
 }
 
-/* ── Items de texto de una página en coords normalizadas 0-1 (origen sup-izq) ── */
+/* ── Diccionario de sinónimos por concepto ──
+   Permite encontrar "N° Factura", "Invoice", "Nro" cuando el campo
+   fue configurado sobre "Factura:" (y viceversa). */
+const EXT_SINONIMOS = {
+  factura: ['factura','no. factura','n factura','nro factura','numero de factura','no factura','num factura','invoice','documento no','consecutivo'],
+  fecha:   ['fecha','fecha del folio','fecha de emision','fecha emision','fecha ingreso','fecha factura','fecha de expedicion','date'],
+  nombre:  ['nombre','paciente','nombres y apellidos','razon social','cliente','beneficiario','especialista','nombre cirujano','nombre completo'],
+  id:      ['identificacion','cedula','documento','cc','nit','no. documento','historia clinica','id paciente','numero documento'],
+  dinero:  ['valor','total','valor total','importe','monto','valor factura','total a pagar','vr','subtotal','valor neto'],
+  entidad: ['entidad','eps','aseguradora','entidad ingreso','entidad paciente','empresa'],
+  codigo:  ['codigo','cups','cie10','cie 10','codigo cups','procedimiento'],
+  telefono:['telefono','tel','celular','movil'],
+};
+
+/* ── Genera las etiquetas candidatas de un campo:
+   ancla capturada + nombre del campo + sinónimos del concepto detectado ── */
+function extEtiquetasCandidatas(campo){
+  const set = new Set();
+  const anchorTxt = extNorm(campo.anchor?.text||'').replace(/[:.]+$/,'').trim();
+  const nombreTxt = extNorm((campo.nombre||'').replace(/_/g,' '));
+  if (anchorTxt.length >= 3) set.add(anchorTxt);
+  if (nombreTxt.length >= 3) set.add(nombreTxt);
+
+  // Detectar a qué concepto pertenece por palabras clave
+  const base = anchorTxt + ' ' + nombreTxt;
+  for (const [grupo, sins] of Object.entries(EXT_SINONIMOS)){
+    const claves = { factura:['factura','invoice'], fecha:['fecha','date'],
+      nombre:['nombre','paciente','cliente','beneficiario','cirujano','especialista'],
+      id:['cedula','identificacion','documento','nit','historia','cc'],
+      dinero:['valor','total','importe','monto'], entidad:['entidad','eps','aseguradora'],
+      codigo:['codigo','cups','cie'], telefono:['telefono','celular'] }[grupo]||[];
+    if (claves.some(k => base.includes(k))) sins.forEach(s => set.add(s));
+  }
+  // Más específicas primero (evita que "no" matchee antes que "no. factura")
+  return [...set].sort((a,b)=>b.length-a.length);
+}
+
+/* ── Tipo semántico del campo: por muestra capturada + nombre ── */
+function extTipoSemantico(campo){
+  const s = (campo?.sample||'').trim();
+  const nom = extNorm((campo?.nombre||'').replace(/_/g,' '));
+  // 1) La muestra manda
+  if (s){
+    if (/\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}/.test(s)) return 'fecha';
+    if (/^\$|\d{1,3}([.,]\d{3})+/.test(s) && /valor|total|importe|monto/.test(nom)) return 'dinero';
+    // codigo alfanumérico (P00267) ANTES que id — requiere prefijo de letras
+    if (/^[A-Za-z]{1,3}\d{3,}$/.test(s.replace(/\s/g,''))) return 'codigo';
+    const dig = (s.match(/\d/g)||[]).length;
+    const len = s.replace(/\s/g,'').length;
+    if (dig >= 5 && dig/Math.max(len,1) > 0.75) return 'id';
+  }
+  // 2) El nombre del campo como respaldo (palabras completas)
+  if (/\bfecha\b|\bdate\b/.test(nom))                          return 'fecha';
+  if (/\bvalor\b|\btotal\b|\bimporte\b|\bmonto\b/.test(nom))   return 'dinero';
+  if (/\bcedula\b|\bidentificacion\b|\bdocumento\b|\bnit\b|\bhistoria\b/.test(nom)) return 'id';
+  if (/\bcodigo\b|\bcups\b|\bcie\s?10\b/.test(nom))            return 'codigo';
+  if (/\btelefono\b|\bcelular\b/.test(nom))                    return 'telefono';
+  return 'texto';
+}
+
+/* ── Extractores por tipo: sacan el dato del texto crudo ── */
+function extExtraerPorTipo(s, tipo, campo){
+  if (!s) return '';
+  switch(tipo){
+    case 'fecha': {
+      const m = s.match(/\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}(\s+\d{1,2}:\d{2})?/);
+      return m ? m[0] : '';
+    }
+    case 'dinero': {
+      const m = s.match(/\$?\s*\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{1,2})?/g);
+      if (!m) return '';
+      m.sort((a,b)=>b.replace(/\D/g,'').length - a.replace(/\D/g,'').length);
+      return m[0].trim();
+    }
+    case 'id': {
+      const m = s.match(/\d[\d.]{4,}/g);
+      if (!m) return '';
+      const lenS = (campo?.sample||'').replace(/\D/g,'').length;
+      m.sort((a,b)=>Math.abs(a.replace(/\D/g,'').length-lenS) - Math.abs(b.replace(/\D/g,'').length-lenS));
+      return m[0];
+    }
+    case 'codigo': {
+      const m = s.match(/[A-Za-z]{0,3}\d{3,}/g);
+      return m ? m.sort((a,b)=>b.length-a.length)[0] : '';
+    }
+    case 'telefono': {
+      const m = s.match(/\d{7,10}/);
+      return m ? m[0] : '';
+    }
+    default: return s;
+  }
+}
+
+/* ── Limpieza de texto crudo (bordes, eco de etiqueta, duplicados, colgantes) ── */
+function extLimpiarValor(raw, campo){
+  let s = (raw||'').replace(/\s+/g,' ').trim();
+  if (!s) return '';
+
+  // Bordes con basura
+  s = s.replace(/^[^\wÁÉÍÓÚÑáéíóúñ$(\d]+/,'').replace(/[\s:;,\.\-_|=]+$/,'').trim();
+
+  // Eco de la etiqueta
+  if (campo?.anchor?.text){
+    const a = campo.anchor.text.replace(/[:\s]+$/,'');
+    if (a.length >= 4){
+      const rx = new RegExp(a.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'gi');
+      s = s.replace(rx,' ').replace(/\s+/g,' ').trim();
+    }
+  }
+
+  // Duplicación exacta ("ALIANZA ... ALIANZA ...")
+  const m = s.match(/^(.{6,}?)\s+\1$/);
+  if (m) s = m[1].trim();
+
+  // Extracción dirigida por tipo
+  const tipo = extTipoSemantico(campo);
+  if (tipo !== 'texto'){
+    const t = extExtraerPorTipo(s, tipo, campo);
+    if (t) return t;
+    // sin patrón del tipo — devolver s; el puntaje lo rechazará
+  }
+
+  // Etiqueta colgante ("... o Civil: z")
+  const lm = s.match(/\s+[A-ZÁÉÍÓÚÑ][\wáéíóúñÁÉÍÓÚÑ]{2,24}:(\s|$)/);
+  if (lm && lm.index > 3) s = s.slice(0, lm.index).trim();
+
+  // Conectores sueltos al final
+  s = s.replace(/\s+(o|y|de|del|la|el)$/i,'').trim();
+  return s;
+}
+
+/* ── Puntaje de confianza (0-1). Gate de la cascada. ── */
+function extPuntuarCandidato(v, campo){
+  if (!v) return 0;
+  const tipo = extTipoSemantico(campo);
+  if (tipo === 'fecha')  return /\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}/.test(v) ? 0.95 : 0.05;
+  if (tipo === 'dinero') return /\d/.test(v) ? 0.9 : 0.05;
+  if (tipo === 'id'){
+    const d = (v.match(/\d/g)||[]).length;
+    if (d < 5) return 0.05;
+    const lenS = (campo?.sample||'').replace(/\D/g,'').length;
+    return (lenS && Math.abs(d-lenS) <= 2) ? 0.95 : 0.7;
+  }
+  if (tipo === 'codigo')   return /\d{3,}/.test(v) ? 0.9 : 0.05;
+  if (tipo === 'telefono') return /\d{7,10}/.test(v) ? 0.9 : 0.05;
+  // texto
+  const letras = (v.match(/[A-Za-zÁÉÍÓÚÑáéíóúñ]/g)||[]).length;
+  if (letras < 3) return 0.2;
+  let sc = 0.6;
+  if (/[\[\]{}|=_]/.test(v)) sc -= 0.25;
+  const sample = campo?.sample||'';
+  if (sample){
+    const lr = Math.min(v.length,sample.length)/Math.max(v.length,sample.length,1);
+    sc += lr*0.2;
+  } else sc += 0.1;
+  return Math.max(0, Math.min(1, sc));
+}
+
+/* ── Items de texto de una página en coords normalizadas (cache) ── */
 const _extItemsCache = new Map();
 async function extItemsPagina(pdfDoc, pageNum, cacheKey) {
   const key = cacheKey+'_p'+pageNum;
@@ -6081,8 +6252,7 @@ async function extItemsPagina(pdfDoc, pageNum, cacheKey) {
   return items;
 }
 
-/* ── Reconstruir líneas: agrupa items por Y y ordena por X ──
-   Soluciona la fragmentación variable de pdf.js entre formatos */
+/* ── Reconstrucción de líneas (inmune a fragmentación variable) ── */
 function extLineas(items){
   const lineas = [];
   const sorted = [...items].sort((a,b)=> a.y-b.y || a.x-b.x);
@@ -6097,15 +6267,12 @@ function extLineas(items){
   return lineas;
 }
 
-/* ── Localizar una etiqueta dentro de las líneas (matching difuso multifragmento) ──
-   Encuentra "nombre cirujano:" aunque venga partido en varios items
-   o pegado al valor en un mismo item ("FOLIO: 17").
-   Devuelve {linea, xFin, y} donde xFin = coordenada donde TERMINA la etiqueta. */
+/* ── Localizar una etiqueta en las líneas (fuzzy, multifragmento) ── */
 function extLocalizarEtiqueta(lineas, etiquetaNorm){
   if (!etiquetaNorm || etiquetaNorm.length < 3) return null;
   for (const L of lineas){
     let concat = '';
-    const map = [];   // por cada caracter de concat: {item, frac}
+    const map = [];
     for (const it of L.items){
       const s = extNorm(it.str);
       for (let k=0; k<s.length; k++) map.push({item:it, frac:(k+1)/Math.max(s.length,1)});
@@ -6117,78 +6284,89 @@ function extLocalizarEtiqueta(lineas, etiquetaNorm){
       const endRef = map[Math.min(idx + etiquetaNorm.length - 1, map.length-1)];
       if (!endRef) continue;
       const it = endRef.item;
-      const xFin = it.x + it.w * Math.min(1, endRef.frac);
-      return { linea: L, xFin, y: it.y, h: it.h };
+      return { linea: L, xFin: it.x + it.w * Math.min(1, endRef.frac), y: it.y, h: it.h };
     }
   }
   return null;
 }
 
-/* ── ¿Un texto parece una nueva etiqueta? ("Sexo:", "Fecha Nacimiento:") ── */
+/* ── Localizar con lista de candidatas (sinónimos) ── */
+function extLocalizarConSinonimos(lineas, etiquetas){
+  for (const e of etiquetas){
+    const loc = extLocalizarEtiqueta(lineas, e);
+    if (loc) return loc;
+  }
+  // Tolerancia OCR: primera palabra significativa de cada etiqueta
+  for (const e of etiquetas){
+    const palabras = e.replace(/:/g,'').split(' ').filter(p=>p.length>=4);
+    for (const p of palabras){
+      const loc = extLocalizarEtiqueta(lineas, p);
+      if (loc) return loc;
+    }
+  }
+  return null;
+}
+
+/* ── ¿Parece nueva etiqueta? ── */
 function extEsEtiqueta(s){
   const t = (s||'').trim();
   return /:$/.test(t) || /^[A-ZÁÉÍÓÚÑ][\wÁÉÍÓÚÑáéíóúñ\.\s\/]{1,32}:(\s|$)/.test(t);
 }
 
-/* ── Extraer el valor a la DERECHA de una etiqueta localizada,
-   cortando en la siguiente etiqueta de la misma línea ── */
+/* ── Corta "23/05/2026 14:22 Area Servicio:" → "23/05/2026 14:22" ── */
 function extCortarEtiquetaInterna(s){
-  // Corta "23/05/2026 14:22 Area Servicio:" → "23/05/2026 14:22"
   const m = s.match(/\s+[A-ZÁÉÍÓÚÑ][^:]{1,30}:(\s|$)/);
   return m ? { texto: s.slice(0, m.index).trim(), corte: true }
            : { texto: s.trim(), corte: false };
 }
 
+/* ── Valor a la DERECHA de una etiqueta, cortando en la siguiente etiqueta ── */
 function extValorDerecha(loc, anchoMax){
   const out = [];
   for (const it of loc.linea.items){
     const itFin = it.x + it.w;
-    if (itFin <= loc.xFin + 0.002) continue;          // antes del fin de la etiqueta
-    if (anchoMax && it.x > loc.xFin + anchoMax) break; // fuera del ancho esperado
+    if (itFin <= loc.xFin + 0.002) continue;
+    if (anchoMax && it.x > loc.xFin + anchoMax) break;
 
     let texto = '';
     if (it.x < loc.xFin - 0.001){
-      // etiqueta y valor comparten item → substring proporcional
       const frac = (loc.xFin - it.x)/Math.max(it.w, 1e-6);
       const cut = Math.round(frac * it.str.length);
       texto = it.str.slice(cut).replace(/^[\s:]+/,'').trim();
     } else {
       texto = it.str.trim();
     }
-    if (!texto) continue;                              // ignorar items vacíos/espacios
-
-    if (out.length && extEsEtiqueta(texto)) break;     // item siguiente es nueva etiqueta
-
+    if (!texto) continue;
+    if (out.length && extEsEtiqueta(texto)) break;
     const { texto: limpio, corte } = extCortarEtiquetaInterna(texto);
     if (limpio) out.push(limpio);
-    if (corte) break;                                  // etiqueta interna → fin del valor
+    if (corte) break;
   }
   return out.join(' ').replace(/\s+/g,' ').trim();
 }
 
-/* ── Extraer el valor DEBAJO de una etiqueta (Hallazgos:, Informe:, etc.) ── */
+/* ── Valor DEBAJO de una etiqueta (Hallazgos:, Informe:) ── */
 function extValorDebajo(lineas, loc, rect){
   const x1 = Math.max(0, (rect?.x ?? loc.xFin - 0.02) - 0.02);
   const x2 = Math.min(1, x1 + Math.max(rect?.w ?? 0.5, 0.25) + 0.04);
   const yBase = loc.y + loc.h;
   const partes = [];
-  let lineasTomadas = 0;
+  let n = 0;
   for (const L of lineas){
     if (L.cy <= yBase) continue;
-    if (lineasTomadas >= 3) break;             // máx 3 líneas de valor
-    const enRango = L.items.filter(it => (it.x+it.w) > x1 && it.x < x2);
-    if (!enRango.length) break;
-    if (extEsEtiqueta(enRango[0].str) && lineasTomadas > 0) break;
-    if (extEsEtiqueta(enRango[0].str) && enRango.length === 1) break;
-    partes.push(enRango.map(i=>i.str.trim()).join(' '));
-    lineasTomadas++;
-    if (L.cy - yBase > 0.06) break;            // no alejarse demasiado
+    if (n >= 3) break;
+    const rango = L.items.filter(it => (it.x+it.w) > x1 && it.x < x2);
+    if (!rango.length) break;
+    if (extEsEtiqueta(rango[0].str) && n > 0) break;
+    if (extEsEtiqueta(rango[0].str) && rango.length === 1) break;
+    partes.push(rango.map(i=>i.str.trim()).join(' '));
+    n++;
+    if (L.cy - yBase > 0.06) break;
   }
   return partes.join(' ').replace(/\s+/g,' ').trim();
 }
 
-/* ── Texto digital dentro de un rect — por INTERSECCIÓN proporcional
-   (extrae substring si el item solo cae parcialmente dentro: "FOLIO: 17") ── */
+/* ── Texto dentro de un rect por intersección proporcional ── */
 function extTextoEnRect(items, rect) {
   const sel = [];
   items.forEach(it => {
@@ -6199,9 +6377,7 @@ function extTextoEnRect(items, rect) {
     if (ov2 - ov1 <= 0) return;
     const f1 = (ov1 - it.x)/Math.max(it.w, 1e-6);
     const f2 = (ov2 - it.x)/Math.max(it.w, 1e-6);
-    const c1 = Math.floor(f1 * it.str.length);
-    const c2 = Math.ceil (f2 * it.str.length);
-    const sub = it.str.slice(c1, c2).trim();
+    const sub = it.str.slice(Math.floor(f1*it.str.length), Math.ceil(f2*it.str.length)).trim();
     if (sub) sel.push({str: sub, x: ov1, y: it.y});
   });
   if (!sel.length) return '';
@@ -6209,10 +6385,9 @@ function extTextoEnRect(items, rect) {
   return sel.map(s=>s.str).join(' ').replace(/\s+/g,' ').trim();
 }
 
-/* ── Buscar etiqueta-ancla cercana a un rect — izquierda o arriba ── */
+/* ── Ancla cercana al crear un campo: izquierda, mismo item, o arriba ── */
 function extBuscarAncla(items, rect) {
   const cy0 = rect.y + rect.h/2;
-  // 1) Izquierda, misma línea
   let best = null, bestDist = 1e9;
   items.forEach(it => {
     const cy = it.y + it.h/2;
@@ -6225,7 +6400,6 @@ function extBuscarAncla(items, rect) {
   });
   if (best) return { text: best.str.trim(), x: best.x, y: best.y, pos: 'left' };
 
-  // 2) Item que CONTIENE el borde izquierdo del rect (etiqueta+valor mismo item)
   let cont = null;
   items.forEach(it => {
     const cy = it.y + it.h/2;
@@ -6238,7 +6412,6 @@ function extBuscarAncla(items, rect) {
     if (etiqueta.length >= 3) return { text: etiqueta, x: cont.x, y: cont.y, pos: 'left' };
   }
 
-  // 3) Arriba (valor debajo de la etiqueta: "Hallazgos:")
   best = null; bestDist = 1e9;
   items.forEach(it => {
     const itBottom = it.y + it.h;
@@ -6253,6 +6426,27 @@ function extBuscarAncla(items, rect) {
   return null;
 }
 
+/* ── OCR: worker COMPARTIDO (una inicialización por sesión) ── */
+let _extWorker = null; // null=no creado, false=fallo, objeto=listo
+async function extOcr(imgUrl){
+  if (_extWorker === null){
+    try {
+      const w = Tesseract.createWorker();
+      const worker = (w && typeof w.then === 'function') ? await w : w;
+      if (worker.load)         await worker.load();
+      if (worker.loadLanguage) await worker.loadLanguage('spa');
+      if (worker.initialize)   await worker.initialize('spa');
+      _extWorker = worker;
+    } catch(e){ _extWorker = false; }
+  }
+  if (_extWorker){
+    try { const { data } = await _extWorker.recognize(imgUrl); return data; }
+    catch(e){ /* fallback abajo */ }
+  }
+  const { data } = await Tesseract.recognize(imgUrl, 'spa');
+  return data;
+}
+
 /* ── OCR de página completa con posiciones de palabras (cache) ── */
 const _extOcrCache = new Map();
 async function extOcrPagina(pdfDoc, pageNum, cacheKey){
@@ -6263,7 +6457,7 @@ async function extOcrPagina(pdfDoc, pageNum, cacheKey){
   const cv = document.createElement('canvas');
   cv.width = vp.width; cv.height = vp.height;
   await page.render({canvasContext: cv.getContext('2d'), viewport: vp}).promise;
-  const { data } = await Tesseract.recognize(cv.toDataURL('image/png'), 'spa');
+  const data = await extOcr(cv.toDataURL('image/png'));
   const items = (data.words||[])
     .filter(w => w.text && w.text.trim() && w.confidence > 30)
     .map(w => ({
@@ -6275,184 +6469,132 @@ async function extOcrPagina(pdfDoc, pageNum, cacheKey){
   return items;
 }
 
-/* ── Localizar etiqueta con tolerancia a errores de OCR ── */
-function extLocalizarEtiquetaAprox(lineas, etiquetaNorm){
-  let loc = extLocalizarEtiqueta(lineas, etiquetaNorm);
-  if (loc) return loc;
-  // Fallback: primera palabra significativa de la etiqueta (>=4 chars)
-  const palabras = etiquetaNorm.replace(/:/g,'').split(' ').filter(p=>p.length>=4);
-  for (const p of palabras){
-    loc = extLocalizarEtiqueta(lineas, p);
-    if (loc) return loc;
-  }
-  return null;
-}
-
-/* ── Inferir tipo de dato a partir de la muestra capturada al crear el campo ── */
-function extInferirTipo(sample){
-  const s = (sample||'').trim();
-  if (!s) return 'texto';
-  if (/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/.test(s)) return 'fecha';
-  const digitos = (s.match(/\d/g)||[]).length;
-  if (digitos >= 4 && digitos / Math.max(s.replace(/\s/g,'').length,1) > 0.6) return 'numero';
-  return 'texto';
-}
-
-/* ── Limpieza y validación del valor extraído ── */
-function extLimpiarValor(raw, campo){
-  let s = (raw||'').replace(/\s+/g,' ').trim();
-  if (!s) return '';
-
-  // 1) Quitar basura en los bordes ("): valor", "=j ...")
-  s = s.replace(/^[^\wÁÉÍÓÚÑáéíóúñ$(\d]+/,'').replace(/[\s:;,\.\-_|=]+$/,'').trim();
-
-  // 2) Quitar eco de la etiqueta si quedó incluida
-  if (campo?.anchor?.text){
-    const a = campo.anchor.text.replace(/[:\s]+$/,'');
-    if (a.length >= 4){
-      const rx = new RegExp(a.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'gi');
-      s = s.replace(rx,' ').replace(/\s+/g,' ').trim();
-    }
-  }
-
-  // 3) Colapsar duplicación exacta ("ALIANZA ... ALIANZA ...")
-  const m = s.match(/^(.{6,}?)\s+\1$/);
-  if (m) s = m[1].trim();
-
-  // 4) Validación por tipo según la muestra del campo
-  const tipo = extInferirTipo(campo?.sample);
-  if (tipo === 'fecha'){
-    const f = s.match(/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}(\s+\d{1,2}:\d{2})?/);
-    if (f) return f[0];
-  }
-  if (tipo === 'numero'){
-    const runs = s.match(/\d[\d\.]{3,}/g);
-    if (runs && runs.length){
-      runs.sort((a,b)=>b.length-a.length);
-      return runs[0];
-    }
-  }
-
-  // 5) Cortar etiqueta colgante al final ("... o Civil: z" → "...")
-  const lm = s.match(/\s+[A-ZÁÉÍÓÚÑ][\wáéíóúñÁÉÍÓÚÑ]{2,24}:(\s|$)/);
-  if (lm && lm.index > 3) s = s.slice(0, lm.index).trim();
-
-  // 6) Cortar conectores sueltos al final ("... o", "... del")
-  s = s.replace(/\s+(o|y|de|del|la|el)$/i,'').trim();
-  return s;
-}
-
-/* ── MOTOR DE EXTRACCIÓN v3 — estrategia en cascada ── */
+/* ── MOTOR: cascada de estrategias con gate de confianza ── */
 async function extExtraerRegion(pdfDoc, campo, cacheKey) {
-  const etiquetaNorm = campo.anchor?.text ? extNorm(campo.anchor.text) : '';
-  const anchoMax = Math.max((campo.rect.w||0.2) * 2.5, 0.25);
-  const limpiar = raw => extLimpiarValor(raw, campo);
+  const etiquetas = extEtiquetasCandidatas(campo);
+  const anchoMax  = Math.max((campo.rect.w||0.2) * 2.5, 0.25);
 
-  /* Estrategia A: ancla exacta + rect desplazado (formatos idénticos) */
+  const candidatos = [];
+  const ALTO = 0.85, MINIMO = 0.35;
+  const probar = (raw) => {
+    const v = extLimpiarValor(raw, campo);
+    if (!v) return null;
+    const sc = extPuntuarCandidato(v, campo);
+    candidatos.push({ v, sc });
+    return sc >= ALTO ? v : null;
+  };
+  const mejor = () => {
+    candidatos.sort((a,b)=>b.sc-a.sc);
+    return (candidatos.length && candidatos[0].sc >= MINIMO) ? candidatos[0].v : '';
+  };
+  const extraerDeLoc = (lineas, loc) =>
+    (campo.anchor?.pos === 'above')
+      ? extValorDebajo(lineas, loc, campo.rect)
+      : extValorDerecha(loc, anchoMax);
+
   const items = await extItemsPagina(pdfDoc, campo.page, cacheKey);
+
+  /* A — Ancla exacta + rect desplazado (formatos idénticos, muy rápida) */
   if (campo.anchor?.text && items.length) {
-    const matches = items.filter(it => extNorm(it.str) === etiquetaNorm);
+    const anchorNorm = extNorm(campo.anchor.text);
+    const matches = items.filter(it => extNorm(it.str) === anchorNorm);
     if (matches.length) {
       matches.sort((a,b) =>
         (Math.abs(a.x-campo.anchor.x)+Math.abs(a.y-campo.anchor.y)) -
-        (Math.abs(b.x-campo.anchor.x)+Math.abs(b.y-campo.anchor.y))
-      );
+        (Math.abs(b.x-campo.anchor.x)+Math.abs(b.y-campo.anchor.y)));
       const m = matches[0];
-      const r = {
+      const ok = probar(extTextoEnRect(items, {
         x: campo.rect.x + (m.x - campo.anchor.x),
         y: campo.rect.y + (m.y - campo.anchor.y),
-        w: campo.rect.w, h: campo.rect.h
-      };
-      const txt = extTextoEnRect(items, r);
-      if (txt) return limpiar(txt);
+        w: campo.rect.w, h: campo.rect.h }));
+      if (ok) return ok;
     }
   }
 
-  /* Estrategia B: etiqueta difusa por líneas — misma página, luego TODAS */
-  if (etiquetaNorm && items.length) {
+  /* B — Etiquetas + sinónimos por líneas: página configurada, luego todas */
+  if (items.length) {
     const paginas = [campo.page];
     for (let p=1; p<=pdfDoc.numPages; p++) if (p !== campo.page) paginas.push(p);
     for (const p of paginas) {
-      const its = await extItemsPagina(pdfDoc, p, cacheKey);
+      const its = (p === campo.page) ? items : await extItemsPagina(pdfDoc, p, cacheKey);
       if (!its.length) continue;
       const lineas = extLineas(its);
-      const loc = extLocalizarEtiqueta(lineas, etiquetaNorm);
+      const loc = extLocalizarConSinonimos(lineas, etiquetas);
       if (loc) {
-        const txt = (campo.anchor?.pos === 'above')
-          ? extValorDebajo(lineas, loc, campo.rect)
-          : extValorDerecha(loc, anchoMax);
-        if (txt) return limpiar(txt);
+        const ok = probar(extraerDeLoc(lineas, loc));
+        if (ok) return ok;
       }
     }
   }
 
-  /* Estrategia C: rect original + barridos verticales (digital) */
+  /* C — Rect original + barridos verticales (respaldo posicional) */
   if (items.length) {
-    const rects = [campo.rect];
-    [0.01,-0.01,0.02,-0.02,0.035,-0.035,0.05,-0.05,0.065,-0.065,0.08,-0.08].forEach(dy => {
-      rects.push({ x:campo.rect.x, y:campo.rect.y+dy, w:campo.rect.w, h:campo.rect.h });
-    });
-    for (const r of rects) {
-      const txt = extTextoEnRect(items, r);
-      if (txt) return limpiar(txt);
+    for (const dy of [0,0.01,-0.01,0.02,-0.02,0.035,-0.035,0.05,-0.05,0.065,-0.065,0.08,-0.08]) {
+      const ok = probar(extTextoEnRect(items, { x:campo.rect.x, y:campo.rect.y+dy, w:campo.rect.w, h:campo.rect.h }));
+      if (ok) return ok;
     }
   }
 
-  /* ══ DOCUMENTO ESCANEADO (sin capa de texto) ══
-     OCR de página completa → mismas estrategias de etiquetas sobre las palabras OCR */
-  const esEscaneado = items.length < 5;
-  if (esEscaneado) {
+  /* D — ESCANEADO: OCR de página completa + etiquetas sobre palabras OCR */
+  if (items.length < 5) {
     try {
       const ocrItems = await extOcrPagina(pdfDoc, campo.page, cacheKey);
       if (ocrItems.length) {
-        /* D1: etiqueta (con tolerancia a errores OCR) sobre palabras OCR */
-        if (etiquetaNorm) {
-          const lineas = extLineas(ocrItems);
-          const loc = extLocalizarEtiquetaAprox(lineas, etiquetaNorm);
-          if (loc) {
-            const txt = (campo.anchor?.pos === 'above')
-              ? extValorDebajo(lineas, loc, campo.rect)
-              : extValorDerecha(loc, anchoMax);
-            if (txt) return limpiar(txt);
-          }
+        const lineas = extLineas(ocrItems);
+        const loc = extLocalizarConSinonimos(lineas, etiquetas);
+        if (loc) {
+          const ok = probar(extraerDeLoc(lineas, loc));
+          if (ok) return ok;
         }
-        /* D2: rect + barridos sobre palabras OCR */
-        const rects = [campo.rect];
-        [0.015,-0.015,0.03,-0.03,0.05,-0.05,0.08,-0.08].forEach(dy => {
-          rects.push({ x:campo.rect.x, y:campo.rect.y+dy, w:campo.rect.w, h:campo.rect.h });
-        });
-        for (const r of rects) {
-          const txt = extTextoEnRect(ocrItems, r);
-          if (txt) return limpiar(txt);
+        for (const dy of [0,0.015,-0.015,0.03,-0.03,0.05,-0.05,0.08,-0.08]) {
+          const ok = probar(extTextoEnRect(ocrItems, { x:campo.rect.x, y:campo.rect.y+dy, w:campo.rect.w, h:campo.rect.h }));
+          if (ok) return ok;
         }
       }
     } catch(e) { console.warn('OCR pagina completa fallo:', e); }
   }
 
-  /* Estrategia E: OCR del recuadro con margen (último recurso) */
+  /* E — OCR del recuadro con margen (último recurso) */
   try {
     const page = await pdfDoc.getPage(campo.page);
-    const ocrScale = 3;
-    const vp2 = page.getViewport({scale: ocrScale});
+    const vp2 = page.getViewport({scale: 3});
     const full = document.createElement('canvas');
     full.width = vp2.width; full.height = vp2.height;
     await page.render({canvasContext: full.getContext('2d'), viewport: vp2}).promise;
-
-    const margen = 0.012;
-    const sx = Math.max(0,(campo.rect.x-margen)) * vp2.width;
-    const sy = Math.max(0,(campo.rect.y-margen)) * vp2.height;
-    const sw = Math.max(4,(campo.rect.w+margen*2) * vp2.width);
-    const sh = Math.max(4,(campo.rect.h+margen*2) * vp2.height);
+    const mgn = 0.012;
     const crop = document.createElement('canvas');
+    const sw = Math.max(4,(campo.rect.w+mgn*2) * vp2.width);
+    const sh = Math.max(4,(campo.rect.h+mgn*2) * vp2.height);
     crop.width = sw; crop.height = sh;
-    crop.getContext('2d').drawImage(full, sx, sy, sw, sh, 0, 0, sw, sh);
+    crop.getContext('2d').drawImage(full,
+      Math.max(0,(campo.rect.x-mgn))*vp2.width, Math.max(0,(campo.rect.y-mgn))*vp2.height,
+      sw, sh, 0, 0, sw, sh);
+    const data = await extOcr(crop.toDataURL('image/png'));
+    probar(data.text||'');
+  } catch(e) { console.warn('OCR fallo:', e); }
 
-    const { data } = await Tesseract.recognize(crop.toDataURL('image/png'), 'spa');
-    return limpiar((data.text||''));
-  } catch(e) {
-    console.warn('OCR fallo:', e);
-    return '';
+  return mejor();
+}
+
+/* ── Validaciones post-extracción: detecta anomalías por fila/campo ── */
+let extWarnings = new Map(); // "rowIdx|campo" → {nivel, msg}
+function extValidarFila(fila, rowIdx){
+  const avisos = [];
+  for (const campo of extCampos){
+    const v = (fila[campo.nombre]||'').trim();
+    const tipo = extTipoSemantico(campo);
+    let nivel = null, msg = '';
+    if (!v){ nivel='warn'; msg='Campo vacío'; }
+    else if (tipo==='fecha'  && !/\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}/.test(v)){ nivel='err'; msg='Fecha inválida'; }
+    else if (tipo==='dinero' && !/\d/.test(v)){ nivel='err'; msg='No parece un valor monetario'; }
+    else if (tipo==='id'     && (v.match(/\d/g)||[]).length < 5){ nivel='warn'; msg='Identificación incompleta'; }
+    else if (tipo==='codigo' && !/\d{3,}/.test(v)){ nivel='warn'; msg='Código incompleto'; }
+    if (nivel){
+      extWarnings.set(`${rowIdx}|${campo.nombre}`, {nivel, msg});
+      avisos.push({campo: campo.nombre, nivel, msg});
+    }
   }
+  return avisos;
 }
 
 /* ── Procesar todos los PDFs ── */
@@ -6470,9 +6612,11 @@ window.extProcesar = async () => {
   progreso.style.display = 'block';
 
   extResultados = [];
+  extWarnings = new Map();
   _extItemsCache.clear();
   _extOcrCache.clear();
 
+  let totalAvisos = 0;
   try {
     for (let i=0; i<extArchivos.length; i++) {
       const arch = extArchivos[i];
@@ -6482,14 +6626,23 @@ window.extProcesar = async () => {
       }
       const fila = { Archivo: arch.name };
       for (const campo of extCampos) {
-        // Si el PDF no tiene esa página, dejar vacío
         if (campo.page > arch.pdfDoc.numPages) { fila[campo.nombre] = ''; continue; }
         fila[campo.nombre] = await extExtraerRegion(arch.pdfDoc, campo, 'doc'+i);
       }
+      totalAvisos += extValidarFila(fila, extResultados.length).length;
       extResultados.push(fila);
-      extRenderResultados(); // render incremental
+      extRenderResultados();
+
+      // Liberar memoria en lotes grandes (mantener el documento abierto en el visor)
+      if (extArchivos.length > 10 && i !== extActivo) {
+        try { arch.pdfDoc.destroy(); } catch(e){}
+        arch.pdfDoc = null;
+      }
     }
-    progreso.innerHTML = `<i class="fa-solid fa-circle-check" style="color:#2e7d32"></i> Extracción completada — ${extResultados.length} documento${extResultados.length>1?'s':''}.`;
+    const avisoTxt = totalAvisos
+      ? ` <span style="color:#e65100">— ${totalAvisos} advertencia${totalAvisos>1?'s':''} detectada${totalAvisos>1?'s':''} (celdas resaltadas)</span>`
+      : '';
+    progreso.innerHTML = `<i class="fa-solid fa-circle-check" style="color:#2e7d32"></i> Extracción completada — ${extResultados.length} documento${extResultados.length>1?'s':''}.${avisoTxt}`;
     document.getElementById('btnExtExcel').style.display = 'inline-flex';
     toast('Extracción completada.','success');
   } catch(e) {
@@ -6501,13 +6654,21 @@ window.extProcesar = async () => {
   }
 };
 
+/* ── Render de resultados con resaltado de advertencias ── */
 function extRenderResultados() {
   const table = document.getElementById('extResultTable');
   if (!extResultados.length) return;
   const cols = ['Archivo', ...extCampos.map(c=>c.nombre)];
   table.querySelector('thead').innerHTML = '<tr>'+cols.map(c=>`<th>${escHtml(c)}</th>`).join('')+'</tr>';
-  table.querySelector('tbody').innerHTML = extResultados.map(r=>
-    '<tr>'+cols.map(c=>`<td>${escHtml(String(r[c]??''))}</td>`).join('')+'</tr>'
+  table.querySelector('tbody').innerHTML = extResultados.map((r,ri)=>
+    '<tr>'+cols.map(c=>{
+      const w = extWarnings.get(`${ri}|${c}`);
+      const st = w ? (w.nivel==='err'
+        ? 'background:#ffebee;color:#b71c1c'
+        : 'background:#fff8e1;color:#8a6d00') : '';
+      const tip = w ? ` title="${escHtml(w.msg)}"` : '';
+      return `<td style="${st}"${tip}>${escHtml(String(r[c]??''))}</td>`;
+    }).join('')+'</tr>'
   ).join('');
 }
 
