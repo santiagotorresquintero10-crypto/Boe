@@ -1223,6 +1223,10 @@
         <div style="display:flex;gap:8px"><strong style="min-width:90px;color:var(--navy)">Adjunto:</strong><span id="envAdjunto" style="color:#2e7d32">—</span></div>
       </div>
       <div class="fg" style="margin-bottom:12px">
+        <label>Fecha del archivo adjunto <span style="font-size:10px;color:var(--gray-3);font-weight:400">(se usa en el nombre del PDF)</span></label>
+        <input type="date" id="envFechaArchivo" onchange="envActualizarNombreAdjunto()"/>
+      </div>
+      <div class="fg" style="margin-bottom:12px">
         <label>Asunto</label>
         <input type="text" id="envAsunto" value="Información de facturación UroExpertos"/>
       </div>

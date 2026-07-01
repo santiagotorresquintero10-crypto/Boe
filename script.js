@@ -3920,6 +3920,21 @@ window.saveTablaRow = async () => {
   };
 
   const filas = [...(tabla.filas||[])];
+
+  // ── Validación anti-duplicados: la factura no puede existir ya en esta tabla ──
+  const facturaNueva = (fila.factura||'').trim().toLowerCase();
+  if (facturaNueva) {
+    const duplicada = filas.some((f, i) => {
+      // Al editar, ignorar la propia fila que se está editando
+      if (editTablaRowIdx !== null && editTablaRowIdx !== undefined && i === editTablaRowIdx) return false;
+      return (f.factura||'').trim().toLowerCase() === facturaNueva;
+    });
+    if (duplicada) {
+      toast(`La factura "${fila.factura}" ya existe en esta tabla. No se puede duplicar.`, 'error');
+      return;
+    }
+  }
+
   if (editTablaRowIdx !== null && editTablaRowIdx !== undefined) {
     filas[editTablaRowIdx] = fila;
   } else {
@@ -5612,6 +5627,9 @@ window.openEnviarModal = (tablaId, idx) => {
   const nombreLimpio = fila.nombre.replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ\s]/g,'').replace(/\s+/g,'_');
 
   document.getElementById('envAdjunto').textContent = `Comprobante_Egreso_${nombreLimpio}_${fechaStr}.pdf`;
+  // Fecha del archivo — editable, predeterminada hoy
+  const fechaInput = document.getElementById('envFechaArchivo');
+  if (fechaInput) fechaInput.value = fechaStr;
   document.getElementById('envAsunto').value = `Notificación de pago de honorarios profesionales — ${mesLabel}`;
   document.getElementById('envMensaje').value =
 `Estimado Dr. ${fila.nombre}, cordial saludo.
@@ -5623,6 +5641,14 @@ Adjunto remitimos el comprobante de egreso con la información correspondiente p
 Agradecemos su compromiso, profesionalismo y valioso apoyo en la prestación de servicios.`;
 
   document.getElementById('enviarModal').classList.add('open');
+};
+
+/* Actualiza el nombre del adjunto mostrado cuando cambia la fecha */
+window.envActualizarNombreAdjunto = () => {
+  if (!_envContext) return;
+  const fecha = document.getElementById('envFechaArchivo')?.value || new Date().toISOString().slice(0,10);
+  const nombreLimpio = _envContext.especialista.replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ\s]/g,'').replace(/\s+/g,'_');
+  document.getElementById('envAdjunto').textContent = `Comprobante_Egreso_${nombreLimpio}_${fecha}.pdf`;
 };
 
 /* Convertir "2026-03" a "Marzo de 2026" */
@@ -5773,7 +5799,7 @@ window.enviarCorreoFila = async () => {
   try {
     // Generar adjunto
     const base64 = generarAdjuntoFila(fila, tablaNombre);
-    const fechaStr = new Date().toISOString().slice(0,10);
+    const fechaStr = document.getElementById('envFechaArchivo')?.value || new Date().toISOString().slice(0,10);
     const nombreLimpio = especialista.replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ\s]/g,'').replace(/\s+/g,'_');
     const attachmentName = `Comprobante_Egreso_${nombreLimpio}_${fechaStr}.pdf`;
 
