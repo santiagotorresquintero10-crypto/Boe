@@ -309,7 +309,7 @@ function App(){
           {[
             {lbl:'Año',    val:filtAnio,   set:setFiltAnio,   opts:[{v:'',l:'Todos'},...años.map(a=>({v:String(a),l:String(a)}))]},
             {lbl:'Mes',    val:filtMes,    set:setFiltMes,    opts:[{v:'',l:'Todos'},...MESES.map((m,i)=>({v:m,l:MESES_CAP[i]}))]},
-            {lbl:'Doctor', val:filtDoctor, set:setFiltDoctor, opts:[{v:'',l:'Todos'},...doctors.map(d=>({v:d.id,l:d.nombre+(doctorStyles[d.id]?'  🎨':'')}))]},
+            {lbl:'Doctor', val:filtDoctor, set:setFiltDoctor, opts:[{v:'',l:'Todos'},...[...doctors].sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||'','es')).map(d=>({v:d.id,l:d.nombre+(doctorStyles[d.id]?'  🎨':'')}))]},
           ].map(f=>(
             <div key={f.lbl} style={{display:'flex',flexDirection:'column',gap:3}}>
               <label style={{fontSize:10,fontWeight:800,color:'#8d9ab0',textTransform:'uppercase',letterSpacing:'.06em'}}>{f.lbl}</label>
