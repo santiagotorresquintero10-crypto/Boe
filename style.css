@@ -1806,12 +1806,26 @@ input,select,textarea{font-family:inherit;font-size:14px;}
 .egr-custom-table thead th.col-pagar {
   color:var(--navy); background:#eef4ff;
 }
-.egr-custom-table tbody td { padding:8px 10px; border-bottom:1px solid var(--gray-1); }
+.egr-custom-table tbody td { padding:8px 10px; border-bottom:1px solid var(--gray-1); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .egr-custom-table tbody tr:hover { background:var(--gray-0); }
 .egr-custom-table .col-pagar-val {
   font-weight:800; color:var(--navy); background:#eef4ff;
 }
 .egr-custom-table .col-pagar-val.neg { color:var(--red); }
+
+/* ── Sistema de columnas estable: anchos fijos + alineación por tipo ── */
+.egr-custom-table col.cc-factura     { width:110px; }
+.egr-custom-table col.cc-mes         { width:90px; }
+.egr-custom-table col.cc-nombre      { min-width:180px; width:16%; }
+.egr-custom-table col.cc-tipopersona { width:130px; }
+.egr-custom-table col.cc-money       { width:105px; }
+.egr-custom-table col.cc-pagar       { width:120px; }
+.egr-custom-table col.cc-acciones    { width:118px; }
+/* Valores monetarios alineados a la derecha (encabezado y celda) */
+.egr-custom-table th.th-money  { text-align:right; }
+.egr-custom-table td.td-money  { text-align:right; font-variant-numeric:tabular-nums; }
+/* Acciones siempre al extremo derecho */
+.egr-custom-table td .tbl-actions { display:flex; gap:5px; justify-content:flex-end; }
 
 /* Autocomplete info */
 .egr-autocomplete-info {

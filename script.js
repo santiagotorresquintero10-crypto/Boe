@@ -3675,6 +3675,7 @@ window.onIdentChange = async (tablaId, selectEl) => {
         factura:      h.factura||'',
         mes:          h.honorarioMes||egreso.honorarioMes||'',
         nombre:       h.nombre||egreso.nombre||'',
+        tipoPersona:  h.tipoPersona||'',
         valorFactura,
         abono:        0,
         glosa:        0,
@@ -3731,16 +3732,17 @@ function renderCustomTables() {
         <td>${escHtml(f.factura||'—')}</td>
         <td>${f.mes||'—'}</td>
         <td>${escHtml(f.nombre||'—')}</td>
-        <td>${fmtCOP(f.valorFactura)}</td>
-        <td>${fmtCOP(f.abono)}</td>
-        <td>${fmtCOP(f.glosa)}</td>
-        <td>${fmtCOP(f.reteFuente)}</td>
-        <td>${fmtCOP(f.afc)}</td>
-        <td>${fmtCOP(f.residentes)}</td>
-        <td>${fmtCOP(f.tiquetes)}</td>
-        <td>${fmtCOP(f.hotel)}</td>
-        <td>${fmtCOP(f.transporte)}</td>
-        <td class="col-pagar-val ${Number(f.valorPagar)<0?'neg':''}">${fmtCOP(f.valorPagar)}</td>
+        <td>${escHtml(f.tipoPersona||'—')}</td>
+        <td class="td-money">${fmtCOP(f.valorFactura)}</td>
+        <td class="td-money">${fmtCOP(f.abono)}</td>
+        <td class="td-money">${fmtCOP(f.glosa)}</td>
+        <td class="td-money">${fmtCOP(f.reteFuente)}</td>
+        <td class="td-money">${fmtCOP(f.afc)}</td>
+        <td class="td-money">${fmtCOP(f.residentes)}</td>
+        <td class="td-money">${fmtCOP(f.tiquetes)}</td>
+        <td class="td-money">${fmtCOP(f.hotel)}</td>
+        <td class="td-money">${fmtCOP(f.transporte)}</td>
+        <td class="col-pagar-val td-money ${Number(f.valorPagar)<0?'neg':''}">${fmtCOP(f.valorPagar)}</td>
         <td>
           <div class="tbl-actions">
             <button class="act-btn edit" onclick="openTablaRowModal('${t.id}',${realIdx})"><i class="fa-solid fa-pen"></i></button>
@@ -3792,16 +3794,22 @@ function renderCustomTables() {
       </div>
       <div class="egr-custom-table-wrap">
         <table class="egr-custom-table">
+          <colgroup>
+            <col class="cc-factura"/><col class="cc-mes"/><col class="cc-nombre"/><col class="cc-tipopersona"/>
+            <col class="cc-money"/><col class="cc-money"/><col class="cc-money"/><col class="cc-money"/>
+            <col class="cc-money"/><col class="cc-money"/><col class="cc-money"/><col class="cc-money"/>
+            <col class="cc-money"/><col class="cc-pagar"/><col class="cc-acciones"/>
+          </colgroup>
           <thead><tr>
-            <th>FACTURA</th><th>MES</th><th>NOMBRE ESPECIALISTA</th>
-            <th>VALOR FACTURA</th><th>ABONO</th><th>GLOSA</th>
-            <th>RETE FUENTE</th><th>AFC</th><th>RESIDENTES</th>
-            <th>TIQUETES</th><th>HOTEL</th><th>TRANSPORTE</th>
-            <th class="col-pagar">VALOR A PAGAR</th><th></th>
+            <th>FACTURA</th><th>MES</th><th>NOMBRE ESPECIALISTA</th><th>TIPO DE PERSONA</th>
+            <th class="th-money">VALOR FACTURA</th><th class="th-money">ABONO</th><th class="th-money">GLOSA</th>
+            <th class="th-money">RETE FUENTE</th><th class="th-money">AFC</th><th class="th-money">RESIDENTES</th>
+            <th class="th-money">TIQUETES</th><th class="th-money">HOTEL</th><th class="th-money">TRANSPORTE</th>
+            <th class="col-pagar th-money">VALOR A PAGAR</th><th></th>
           </tr></thead>
-          <tbody>${rows||`<tr><td colspan="14" style="text-align:center;padding:20px;color:var(--gray-3)">Sin filas. Añade la primera.</td></tr>`}</tbody>
+          <tbody>${rows||`<tr><td colspan="15" style="text-align:center;padding:20px;color:var(--gray-3)">Sin filas. Añade la primera.</td></tr>`}</tbody>
           ${filas.length?`<tfoot><tr>
-            <td colspan="12" style="text-align:right;font-weight:800;padding:9px 12px;color:var(--gray-4);font-size:12px">TOTAL:</td>
+            <td colspan="13" style="text-align:right;font-weight:800;padding:9px 12px;color:var(--gray-4);font-size:12px">TOTAL:</td>
             <td style="font-weight:800;color:var(--navy);background:#eef4ff;padding:9px 12px">${fmtCOP(totalPagar)}</td>
             <td></td>
           </tr></tfoot>`:''}
@@ -3839,6 +3847,9 @@ window.openTablaRowModal = (tablaId, idx) => {
         ? `<option value="${escHtml(savedNombre)}" selected>${escHtml(savedNombre)}</option>` : '');
   // Force value after DOM update
   selNombre.value = savedNombre;
+
+  const selTipoP = document.getElementById('trTipoPersona');
+  if (selTipoP) selTipoP.value = f?.tipoPersona||'';
 
   document.getElementById('trValorFactura').value= f?.valorFactura||'';
   document.getElementById('trAbono').value       = f?.abono||'';
@@ -3932,6 +3943,7 @@ window.saveTablaRow = async () => {
     factura:      document.getElementById('trFactura').value.trim(),
     mes:          document.getElementById('trMes').value,
     nombre:       document.getElementById('trNombre').value.trim(),
+    tipoPersona:  document.getElementById('trTipoPersona')?.value||'',
     valorFactura: Number(document.getElementById('trValorFactura').value)||0,
     abono:        Number(document.getElementById('trAbono').value)||0,
     glosa:        Number(document.getElementById('trGlosa').value)||0,
@@ -5010,7 +5022,7 @@ window.exportarTablaExcel = (tablaId) => {
 
   // Encabezados
   const headers = [
-    'FACTURA','MES','NOMBRE ESPECIALISTA','VALOR FACTURA',
+    'FACTURA','MES','NOMBRE ESPECIALISTA','TIPO DE PERSONA','VALOR FACTURA',
     'ABONO','GLOSA','RETE FUENTE','AFC','RESIDENTES',
     'TIQUETES','HOTEL','TRANSPORTE','VALOR A PAGAR'
   ];
@@ -5020,6 +5032,7 @@ window.exportarTablaExcel = (tablaId) => {
     f.factura     || '',
     f.mes         || '',
     f.nombre      || '',
+    f.tipoPersona || '',
     fmtNum(f.valorFactura),
     fmtNum(f.abono),
     fmtNum(f.glosa),
