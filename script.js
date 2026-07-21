@@ -3278,6 +3278,9 @@ const fmtCOP = v => '$ ' + Number(v||0).toLocaleString('es-CO');
 
 /* ── Navegar ── */
 function initEgresos() {
+  // Cargar logo UROEXPERTOS en el encabezado
+  const logoImg = document.getElementById('uroLogoHeader');
+  if (logoImg && typeof UROEXPERTOS_LOGO_B64 !== 'undefined') logoImg.src = UROEXPERTOS_LOGO_B64;
   renderEgresoTable();
   renderCustomTables();
 }
@@ -3404,7 +3407,19 @@ window.openEgresoModal = (id=null) => {
 window.calcEgresoNeto = () => {
   const entidad = Number(document.getElementById('eValorEntidad')?.value)||0;
   const nota    = Number(document.getElementById('eNotaCredito')?.value)||0;
-  const neto    = entidad - nota;
+
+  // ICA = REDONDEAR(Valor Entidad × 10 / 1000)   → tarifa 10 x mil
+  const ica = Math.round(entidad * 10 / 1000);
+  // Retención por Honorarios = Valor Entidad × 11%
+  const reteHon = Math.round(entidad * 0.11);
+
+  const elIca = document.getElementById('eIca');
+  const elRet = document.getElementById('eReteHonorarios');
+  if (elIca) elIca.value = ica;
+  if (elRet) elRet.value = reteHon;
+
+  // Valor Entidad Neto = Valor Entidad − Nota Crédito − ICA − Retención
+  const neto = entidad - nota - ica - reteHon;
   const el = document.getElementById('eValorEntidadNeto');
   if(el) el.value = neto;
 };
@@ -3451,6 +3466,13 @@ function renderHijasTable() {
           ${h.nombre && !doctors.some(d=>d.especialista===h.nombre)?`<option value="${escHtml(h.nombre)}" selected>${escHtml(h.nombre)}</option>`:''}
         </select>
       </td>
+      <td>
+        <select class="hija-tipopersona" style="width:100%;border:1.5px solid var(--gray-1);border-radius:8px;padding:8px 10px;font-size:13px;outline:none;font-family:'Nunito',sans-serif;background:white;color:var(--navy);font-weight:600;cursor:pointer">
+          <option value="">— Tipo —</option>
+          <option value="Persona Natural" ${h.tipoPersona==='Persona Natural'?'selected':''}>Persona Natural</option>
+          <option value="SAS" ${h.tipoPersona==='SAS'?'selected':''}>SAS</option>
+        </select>
+      </td>
       <td><input type="text" class="hija-proveedor" value="${escHtml(h.proveedor||'')}" placeholder="Nombre empresa…" style="border:1.5px solid var(--gray-1);border-radius:8px;padding:8px 10px;font-size:13px;outline:none;font-family:'Nunito',sans-serif;background:#f8faff;color:var(--navy);font-weight:600;width:100%;transition:border-color .2s" readonly/></td>
       <td><input type="text"   class="hija-factura"  value="${escHtml(h.factura||'')}"  placeholder="FE-001-H"/></td>
       <td><input type="number" class="hija-entidad"  value="${h.valorEntidad||''}"       placeholder="0" min="0"/></td>
@@ -3490,13 +3512,14 @@ window.saveEgreso = async () => {
     const honorarioMes     = row.querySelector('.hija-mes')?.value||'';
     const concepto         = row.querySelector('.hija-concepto')?.value.trim()||'';
     const nombre           = row.querySelector('.hija-nombre')?.value||'';
+    const tipoPersona      = row.querySelector('.hija-tipopersona')?.value||'';
     const proveedor        = row.querySelector('.hija-proveedor')?.value.trim()||'';
     const factura          = row.querySelector('.hija-factura')?.value.trim()||'';
     const fechaFacturacion = row.querySelector('.hija-fecha')?.value||'';
     const valorEntidad     = Number(row.querySelector('.hija-entidad')?.value)||0;
     const administracion   = Number(row.querySelector('.hija-admin')?.value)||0;
     const valorEspecialista= Number(row.querySelector('.hija-valor')?.value)||0;
-    if (factura||nombre||concepto) hijas.push({fechaFacturacion,honorarioMes,concepto,nombre,proveedor,factura,valorEntidad,administracion,valorEspecialista});
+    if (factura||nombre||concepto) hijas.push({fechaFacturacion,honorarioMes,concepto,nombre,tipoPersona,proveedor,factura,valorEntidad,administracion,valorEspecialista});
   });
 
   const data = {
@@ -3506,6 +3529,8 @@ window.saveEgreso = async () => {
     nombre,
     factura,
     valorEntidad:      Number(document.getElementById('eValorEntidad').value)||0,
+    ica:               Number(document.getElementById('eIca').value)||0,
+    reteHonorarios:    Number(document.getElementById('eReteHonorarios').value)||0,
     notaCredito:       Number(document.getElementById('eNotaCredito').value)||0,
     valorEntidadNeto:  Number(document.getElementById('eValorEntidadNeto').value)||0,
     administracion:    Number(document.getElementById('eAdministracion').value)||0,
@@ -6576,6 +6601,140 @@ async function extExtraerRegion(pdfDoc, campo, cacheKey) {
   return mejor();
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   PIPELINE IA — Clasificación + Extracción con Gemini 2.0 Flash
+   (motor principal; el motor v5 local queda como fallback)
+═══════════════════════════════════════════════════════════════ */
+
+const EXT_CATEGORIAS = {
+  historia_clinica:    'Historia Clínica',
+  epicrisis:           'Epicrisis',
+  factura:             'Factura',
+  orden_medica:        'Orden Médica',
+  autorizacion:        'Autorización',
+  laboratorio:         'Resultado de Laboratorio',
+  formula_medica:      'Fórmula Médica',
+  documento_identidad: 'Documento de Identidad',
+  informe_quirurgico:  'Informe Quirúrgico',
+  otro:                'Otro',
+};
+
+/* Renderiza una página del PDF como imagen JPEG base64 (para escaneados) */
+async function extRenderPaginaImagen(pdfDoc, pageNum, scale){
+  const page = await pdfDoc.getPage(pageNum);
+  const vp = page.getViewport({scale: scale||1.4});
+  const cv = document.createElement('canvas');
+  cv.width = vp.width; cv.height = vp.height;
+  await page.render({canvasContext: cv.getContext('2d'), viewport: vp}).promise;
+  return cv.toDataURL('image/jpeg', 0.78).split(',')[1];
+}
+
+/* Texto digital completo del documento (para PDFs con capa de texto — más barato y preciso) */
+async function extTextoCompletoDoc(pdfDoc, cacheKey){
+  let out = '';
+  const maxPags = Math.min(pdfDoc.numPages, 6);
+  for (let p=1; p<=maxPags; p++){
+    const items = await extItemsPagina(pdfDoc, p, cacheKey);
+    if (!items.length) continue;
+    const lineas = extLineas(items);
+    out += `\n--- PÁGINA ${p} ---\n`;
+    out += lineas.map(L => L.items.map(i=>i.str).join(' ')).join('\n');
+    if (out.length > 16000) break;
+  }
+  return out.slice(0, 16000).trim();
+}
+
+/* Construye el prompt de extracción a partir de los campos configurados */
+function extConstruirPrompt(campos){
+  const lista = campos.map(cp => {
+    const tipo = extTipoSemantico(cp);
+    const pistas = [];
+    if (cp.anchor?.text) pistas.push(`suele aparecer cerca de "${cp.anchor.text.trim()}"`);
+    if (cp.sample)       pistas.push(`ejemplo de valor: "${cp.sample.trim()}"`);
+    return `- "${cp.nombre}" (tipo: ${tipo})${pistas.length ? ' — ' + pistas.join('; ') : ''}`;
+  }).join('\n');
+
+  return `Eres un sistema experto de extracción de datos de documentos médicos y de facturación de Colombia.
+
+TAREA 1 — Clasifica el documento en UNA de estas categorías:
+${Object.keys(EXT_CATEGORIAS).join(' | ')}
+
+TAREA 2 — Extrae EXACTAMENTE estos campos (si un campo no aparece en el documento, usa cadena vacía ""):
+${lista}
+
+REGLAS ESTRICTAS:
+1. Devuelve las fechas tal como aparecen en el documento (ej: 23/05/2026).
+2. Para cédulas, NIT y códigos devuelve solo el valor, sin etiquetas ni texto adicional.
+3. Para nombres devuelve el nombre completo tal como está escrito.
+4. NUNCA inventes datos. Si no estás seguro, usa "" y confianza baja.
+5. Asigna a cada campo una confianza entre 0 y 1.
+
+Responde ÚNICAMENTE con este JSON (sin texto adicional, sin markdown):
+{"categoria":"...","campos":{${campos.map(cp=>`"${cp.nombre}":"..."`).join(',')}},"confianza":{${campos.map(cp=>`"${cp.nombre}":0.0`).join(',')}}}`;
+}
+
+/* Parsea la respuesta JSON de Gemini con tolerancia a fences */
+function extParsearRespuestaIA(texto){
+  let t = (texto||'').trim().replace(/^```json\s*/i,'').replace(/^```\s*/,'').replace(/```\s*$/,'').trim();
+  const i1 = t.indexOf('{'), i2 = t.lastIndexOf('}');
+  if (i1 === -1 || i2 === -1) throw new Error('Respuesta IA sin JSON');
+  return JSON.parse(t.slice(i1, i2+1));
+}
+
+/* Limpieza ligera para valores de la IA (sin heurísticas agresivas) */
+function extLimpiarIA(v, campo){
+  let s = String(v ?? '').replace(/\s+/g,' ').trim();
+  if (!s) return '';
+  const tipo = extTipoSemantico(campo);
+  if (tipo !== 'texto'){
+    const t = extExtraerPorTipo(s, tipo, campo);
+    if (t) return t;
+  }
+  return s;
+}
+
+/* Llamada principal: clasifica + extrae un documento con Gemini */
+async function extGeminiExtraer(arch, campos, cacheKey){
+  const parts = [{ text: extConstruirPrompt(campos) }];
+
+  // Híbrido: texto digital si existe (barato/preciso); imágenes si es escaneado
+  const texto = await extTextoCompletoDoc(arch.pdfDoc, cacheKey);
+  if (texto.length > 300){
+    parts.push({ text: '\nCONTENIDO DEL DOCUMENTO:\n' + texto });
+  } else {
+    const maxPags = Math.min(arch.pdfDoc.numPages, 4);
+    for (let p=1; p<=maxPags; p++){
+      const b64 = await extRenderPaginaImagen(arch.pdfDoc, p);
+      parts.push({ inline_data: { mime_type: 'image/jpeg', data: b64 } });
+    }
+  }
+
+  const resp = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY2}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts }],
+        generationConfig: { temperature: 0, responseMimeType: 'application/json' },
+      }),
+    }
+  );
+  if (!resp.ok){
+    const err = await resp.text();
+    throw new Error(`Gemini ${resp.status}: ${err.slice(0,120)}`);
+  }
+  const data = await resp.json();
+  const texto_resp = data?.candidates?.[0]?.content?.parts?.map(p=>p.text||'').join('') || '';
+  const json = extParsearRespuestaIA(texto_resp);
+
+  return {
+    categoria: EXT_CATEGORIAS[json.categoria] || json.categoria || '',
+    valores:   json.campos    || {},
+    confianza: json.confianza || {},
+  };
+}
+
 /* ── Validaciones post-extracción: detecta anomalías por fila/campo ── */
 let extWarnings = new Map(); // "rowIdx|campo" → {nivel, msg}
 function extValidarFila(fila, rowIdx){
@@ -6625,9 +6784,36 @@ window.extProcesar = async () => {
         arch.pdfDoc = await pdfjsLib.getDocument({data: arch.data.slice(0)}).promise;
       }
       const fila = { Archivo: arch.name };
+
+      // ── PIPELINE IA: Gemini clasifica + extrae; el motor local es fallback ──
+      const usarIA = document.getElementById('extUsarIA')?.checked !== false;
+      let ia = null;
+      if (usarIA) {
+        try {
+          ia = await extGeminiExtraer(arch, extCampos, 'doc'+i);
+          fila.Categoria = ia.categoria || '';
+        } catch(e) {
+          console.warn('Gemini fallo, usando motor local:', e.message);
+          progreso.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> ${i+1}/${extArchivos.length}: ${escHtml(arch.name)} <span style="color:#e65100">(modo local)</span>`;
+        }
+      }
+
       for (const campo of extCampos) {
-        if (campo.page > arch.pdfDoc.numPages) { fila[campo.nombre] = ''; continue; }
-        fila[campo.nombre] = await extExtraerRegion(arch.pdfDoc, campo, 'doc'+i);
+        let v = '', confIA = 0;
+        if (ia) {
+          v = extLimpiarIA(ia.valores?.[campo.nombre], campo);
+          confIA = Number(ia.confianza?.[campo.nombre]) || 0;
+        }
+        // Fallback local por campo: sin valor de IA o confianza baja
+        if ((!v || confIA < 0.4) && campo.page <= arch.pdfDoc.numPages) {
+          const local = await extExtraerRegion(arch.pdfDoc, campo, 'doc'+i);
+          if (local && !v) v = local;
+        }
+        fila[campo.nombre] = v;
+        // Confianza baja de la IA con valor presente → marcar para revisión
+        if (v && ia && confIA > 0 && confIA < 0.6) {
+          extWarnings.set(`${extResultados.length}|${campo.nombre}`, {nivel:'warn', msg:`Confianza IA baja (${Math.round(confIA*100)}%) — verificar`});
+        }
       }
       totalAvisos += extValidarFila(fila, extResultados.length).length;
       extResultados.push(fila);
@@ -6658,7 +6844,8 @@ window.extProcesar = async () => {
 function extRenderResultados() {
   const table = document.getElementById('extResultTable');
   if (!extResultados.length) return;
-  const cols = ['Archivo', ...extCampos.map(c=>c.nombre)];
+  const hayCategoria = extResultados.some(r => r.Categoria);
+  const cols = ['Archivo', ...(hayCategoria ? ['Categoria'] : []), ...extCampos.map(c=>c.nombre)];
   table.querySelector('thead').innerHTML = '<tr>'+cols.map(c=>`<th>${escHtml(c)}</th>`).join('')+'</tr>';
   table.querySelector('tbody').innerHTML = extResultados.map((r,ri)=>
     '<tr>'+cols.map(c=>{
@@ -6666,16 +6853,28 @@ function extRenderResultados() {
       const st = w ? (w.nivel==='err'
         ? 'background:#ffebee;color:#b71c1c'
         : 'background:#fff8e1;color:#8a6d00') : '';
-      const tip = w ? ` title="${escHtml(w.msg)}"` : '';
-      return `<td style="${st}"${tip}>${escHtml(String(r[c]??''))}</td>`;
+      const tip = w ? ` title="${escHtml(w.msg)} — clic para corregir"` : '';
+      const editable = (c !== 'Archivo' && c !== 'Categoria')
+        ? ` contenteditable="true" onblur="extEditarCelda(${ri},'${escHtml(c)}',this)"` : '';
+      return `<td style="${st};outline:none"${tip}${editable}>${escHtml(String(r[c]??''))}</td>`;
     }).join('')+'</tr>'
   ).join('');
 }
 
+/* Corrección humana: al editar una celda, actualizar datos y limpiar advertencia */
+window.extEditarCelda = (ri, col, el) => {
+  const nuevo = el.textContent.trim();
+  if (extResultados[ri]) extResultados[ri][col] = nuevo;
+  extWarnings.delete(`${ri}|${col}`);
+  el.style.background = ''; el.style.color = '';
+  el.removeAttribute('title');
+};
+
 /* ── Exportar Excel ── */
 window.extExportarExcel = () => {
   if (!extResultados.length) { toast('No hay resultados para exportar.','error'); return; }
-  const cols = ['Archivo', ...extCampos.map(c=>c.nombre)];
+  const hayCategoria = extResultados.some(r => r.Categoria);
+  const cols = ['Archivo', ...(hayCategoria ? ['Categoria'] : []), ...extCampos.map(c=>c.nombre)];
   const data = [cols, ...extResultados.map(r=>cols.map(c=>r[c]??''))];
   const ws = XLSX.utils.aoa_to_sheet(data);
   ws['!cols'] = cols.map(()=>({wch:24}));

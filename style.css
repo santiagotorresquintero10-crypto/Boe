@@ -1727,7 +1727,7 @@ input,select,textarea{font-family:inherit;font-size:14px;}
 }
 .egr-hijas-title i { color:#7eb3ff; }
 .egr-hijas-scroll { overflow-x:auto; }
-.egr-hijas-table { width:100%; border-collapse:collapse; font-size:12.5px; min-width:900px; }
+.egr-hijas-table { width:100%; border-collapse:collapse; font-size:12.5px; min-width:1040px; }
 .egr-hijas-table thead { position:sticky; top:0; z-index:1; }
 .egr-hijas-table th {
   padding:10px 10px; background:rgba(23,87,168,.1); color:var(--navy);
@@ -1755,9 +1755,10 @@ input,select,textarea{font-family:inherit;font-size:14px;}
 /* Anchos de columnas en modal hijas */
 .egr-hijas-table col.hc-fecha    { width:120px; }
 .egr-hijas-table col.hc-mes      { width:105px; }
-.egr-hijas-table col.hc-concepto { min-width:140px; width:17%; }
-.egr-hijas-table col.hc-nombre   { min-width:170px; width:20%; }
-.egr-hijas-table col.hc-proveedor{ min-width:170px; width:20%; }
+.egr-hijas-table col.hc-concepto { min-width:130px; width:15%; }
+.egr-hijas-table col.hc-nombre   { min-width:160px; width:17%; }
+.egr-hijas-table col.hc-tipopersona { width:140px; }
+.egr-hijas-table col.hc-proveedor{ min-width:150px; width:16%; }
 .egr-hijas-table col.hc-factura  { width:100px; }
 .egr-hijas-table col.hc-entidad  { width:105px; }
 .egr-hijas-table col.hc-admin    { width:105px; }

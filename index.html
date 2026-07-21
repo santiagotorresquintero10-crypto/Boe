@@ -365,7 +365,11 @@
       <section class="view" id="view-extraccion">
         <div class="view-title">
           <h1>Extracción de Datos <small>PDF a Excel — selección visual</small></h1>
-          <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;background:linear-gradient(135deg,#7b2ff7,#4a0fd4);color:white;padding:8px 14px;border-radius:9px;font-size:12.5px;font-weight:700;font-family:'Nunito',sans-serif">
+              <input type="checkbox" id="extUsarIA" checked style="width:15px;height:15px;accent-color:white;cursor:pointer"/>
+              <i class="fa-solid fa-brain"></i> IA Gemini
+            </label>
             <label class="btn btn-ghost" style="cursor:pointer;display:inline-flex;align-items:center;gap:7px">
               <i class="fa-solid fa-file-pdf" style="color:#c0392b"></i> Cargar PDFs
               <input type="file" id="extFileInput" accept=".pdf" multiple style="display:none" onchange="extCargarArchivos(event)"/>
@@ -615,7 +619,10 @@
       <!-- UROEXPERTOS -->
       <section class="view" id="view-egresos">
         <div class="view-title">
-          <h1>UROEXPERTOS <small>Gestión de honorarios y liquidaciones</small></h1>
+          <h1 style="display:flex;align-items:center;gap:12px">
+            <img id="uroLogoHeader" alt="UROEXPERTOS" style="height:38px;width:auto;object-fit:contain"/>
+            <span>UROEXPERTOS <small>Gestión de honorarios y liquidaciones</small></span>
+          </h1>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
             <button class="btn btn-ghost" onclick="openEgresoModal()"><i class="fa-solid fa-plus"></i> Nuevo Egreso</button>
             <button class="btn btn-ghost" onclick="openComprobanteModal()" style="border-color:var(--blue);color:var(--blue)"><i class="fa-solid fa-file-invoice-dollar"></i> Comprobante</button>
@@ -1102,6 +1109,8 @@
         <div class="fg"><label>Nombre *</label><input type="text" id="eNombre" placeholder="Dr. Juan Pérez"/></div>
         <div class="fg"><label>Factura *</label><input type="text" id="eFactura" placeholder="FE-001"/></div>
         <div class="fg"><label>Valor Entidad</label><input type="number" id="eValorEntidad" placeholder="0" min="0" oninput="calcEgresoNeto()"/></div>
+        <div class="fg"><label>ICA <span style="font-size:10.5px;color:var(--gray-3);font-weight:400">(auto: Valor Entidad×10/1000)</span></label><input type="number" id="eIca" placeholder="0" readonly style="background:var(--gray-0);color:var(--navy)"/></div>
+        <div class="fg"><label>Retención por Honorarios <span style="font-size:10.5px;color:var(--gray-3);font-weight:400">(auto: Valor Entidad×11%)</span></label><input type="number" id="eReteHonorarios" placeholder="0" readonly style="background:var(--gray-0);color:var(--navy)"/></div>
         <div class="fg"><label>Nota Crédito <span style="font-size:10.5px;color:var(--gray-3);font-weight:400">(resta de Valor Entidad)</span></label><input type="number" id="eNotaCredito" placeholder="0" min="0" oninput="calcEgresoNeto()"/></div>
         <div class="fg"><label>Valor Entidad Neto <span style="font-size:10.5px;color:var(--gray-3);font-weight:400">(calculado)</span></label><input type="number" id="eValorEntidadNeto" placeholder="0" readonly style="background:var(--blue-pale);font-weight:700;color:var(--navy)"/></div>
         <div class="fg"><label>Administración</label><input type="number" id="eAdministracion" placeholder="0" min="0"/></div>
@@ -1118,7 +1127,7 @@
           <table class="egr-hijas-table" id="hijasTableEl">
             <colgroup>
               <col class="hc-fecha"/><col class="hc-mes"/><col class="hc-concepto"/><col class="hc-nombre"/>
-              <col class="hc-proveedor"/><col class="hc-factura"/><col class="hc-entidad"/><col class="hc-admin"/>
+              <col class="hc-tipopersona"/><col class="hc-proveedor"/><col class="hc-factura"/><col class="hc-entidad"/><col class="hc-admin"/>
               <col class="hc-esp"/><col class="hc-del"/>
             </colgroup>
             <thead>
@@ -1127,6 +1136,7 @@
                 <th>Honorario Mes</th>
                 <th>Concepto</th>
                 <th>Nombre</th>
+                <th>Tipo de Persona</th>
                 <th>Proveedor</th>
                 <th>Factura Hija</th>
                 <th>Valor Entidad</th>
