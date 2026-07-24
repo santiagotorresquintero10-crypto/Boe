@@ -632,6 +632,11 @@ window.applyTareaFilters = () => {
       </div>
     </div>`;
   }).join('');
+
+  // Re-aplicar la búsqueda activa tras re-renderizar (altas, ediciones, snapshots)
+  Object.keys(busquedaTablas).forEach(id => {
+    if (busquedaTablas[id]) filtrarTablaBusqueda(id, busquedaTablas[id]);
+  });
 };
 window.toggleTarea = async (id,estado) => {
   const nuevo=estado==='Completada'?'Pendiente':'Completada';
@@ -3710,6 +3715,56 @@ window.deleteTabla = async (id) => {
   catch(e) { toast('Error: '+e.message,'error'); }
 };
 
+/* ══ BUSCADOR DE TABLAS ══
+   Filtrado en vivo sobre el DOM: instantáneo, sin re-render,
+   así el campo no pierde el foco mientras se escribe. */
+const busquedaTablas = {};   // { tablaId: texto }
+
+/* Normaliza para comparar: minúsculas, sin tildes, espacios colapsados */
+function normBusq(s){
+  return String(s||'').toLowerCase().normalize('NFD')
+    .replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim();
+}
+
+window.filtrarTablaBusqueda = (tablaId, texto) => {
+  busquedaTablas[tablaId] = texto || '';
+  const q    = normBusq(texto);
+  const card = document.getElementById('tcard-'+tablaId);
+  if (!card) return;
+
+  const filas = card.querySelectorAll('.egr-custom-table tbody tr[data-search]');
+  let visibles = 0, total = 0;
+
+  filas.forEach(tr => {
+    const match = !q || (tr.getAttribute('data-search')||'').includes(q);
+    tr.style.display = match ? '' : 'none';
+    if (match){ visibles++; total += Number(tr.getAttribute('data-pagar'))||0; }
+  });
+
+  // Mensaje "sin resultados"
+  const noRes = card.querySelector('.tbl-no-results');
+  if (noRes) noRes.style.display = (q && visibles === 0 && filas.length) ? '' : 'none';
+
+  // Total recalculado sobre lo visible
+  const totEl = card.querySelector('.tbl-total-val');
+  if (totEl) totEl.textContent = fmtCOP(total);
+
+  // Contador "N de M"
+  const cnt = card.querySelector('.ech-search-count');
+  if (cnt) cnt.textContent = q ? `${visibles} de ${filas.length}` : '';
+
+  // Botón limpiar visible solo con texto
+  const x = card.querySelector('.ech-search-x');
+  if (x) x.style.display = q ? '' : 'none';
+};
+
+window.limpiarBusquedaTabla = (tablaId) => {
+  const inp = document.getElementById('busq-'+tablaId);
+  if (inp) inp.value = '';
+  filtrarTablaBusqueda(tablaId, '');
+  if (inp) inp.focus();
+};
+
 function renderCustomTables() {
   const box = document.getElementById('egresoCustomTables');
   if (!box) return;
@@ -3727,8 +3782,10 @@ function renderCustomTables() {
 
     const rows = filas.map((f)=>{
       const realIdx = allFilas.indexOf(f); // real index regardless of filter
+      // Texto indexado para el buscador (factura, nombre, tipo de persona, mes)
+      const blob = normBusq([f.factura, f.nombre, f.tipoPersona, f.mes].join(' '));
       return `
-      <tr>
+      <tr data-search="${escHtml(blob)}" data-pagar="${Number(f.valorPagar)||0}">
         <td>${escHtml(f.factura||'—')}</td>
         <td>${f.mes||'—'}</td>
         <td>${escHtml(f.nombre||'—')}</td>
@@ -3753,7 +3810,7 @@ function renderCustomTables() {
       </tr>`;
     }).join('');
 
-    return `<div class="egr-custom-card">
+    return `<div class="egr-custom-card" id="tcard-${t.id}">
       <div class="egr-custom-head">
         ${t.logoIzq?`<img src="${t.logoIzq}" class="egr-custom-logo" alt="logo"/>`:''}
         <div class="ech-nombre"><i class="fa-solid fa-table-columns" style="opacity:.6;margin-right:5px"></i>${escHtml(t.nombre)}</div>
@@ -3784,6 +3841,17 @@ function renderCustomTables() {
           </select>
         </div>
         <div class="ech-divider"></div>
+        <!-- Buscador -->
+        <div class="ech-search">
+          <i class="fa-solid fa-magnifying-glass ech-search-ico"></i>
+          <input type="text" class="ech-search-input" id="busq-${t.id}"
+            placeholder="Buscar por factura, nombre, tipo, mes…"
+            value="${escHtml(busquedaTablas[t.id]||'')}"
+            oninput="filtrarTablaBusqueda('${t.id}', this.value)"/>
+          <button class="ech-search-x" title="Limpiar" onclick="limpiarBusquedaTabla('${t.id}')">&times;</button>
+          <span class="ech-search-count"></span>
+        </div>
+        <div class="ech-divider"></div>
         <!-- Acciones -->
         <div class="ech-actions">
           <button class="ech-btn" onclick="openTablaRowModal('${t.id}',null)" title="Nueva fila"><i class="fa-solid fa-plus"></i> Nueva fila</button>
@@ -3807,10 +3875,12 @@ function renderCustomTables() {
             <th class="th-money">TIQUETES</th><th class="th-money">HOTEL</th><th class="th-money">TRANSPORTE</th>
             <th class="col-pagar th-money">VALOR A PAGAR</th><th></th>
           </tr></thead>
-          <tbody>${rows||`<tr><td colspan="15" style="text-align:center;padding:20px;color:var(--gray-3)">Sin filas. Añade la primera.</td></tr>`}</tbody>
+          <tbody>${rows||`<tr><td colspan="15" style="text-align:center;padding:20px;color:var(--gray-3)">Sin filas. Añade la primera.</td></tr>`}
+            <tr class="tbl-no-results" style="display:none"><td colspan="15" style="text-align:center;padding:20px;color:var(--gray-3)"><i class="fa-solid fa-magnifying-glass" style="opacity:.5;margin-right:6px"></i>Sin resultados para la búsqueda.</td></tr>
+          </tbody>
           ${filas.length?`<tfoot><tr>
             <td colspan="13" style="text-align:right;font-weight:800;padding:9px 12px;color:var(--gray-4);font-size:12px">TOTAL:</td>
-            <td style="font-weight:800;color:var(--navy);background:#eef4ff;padding:9px 12px">${fmtCOP(totalPagar)}</td>
+            <td class="tbl-total-val" style="font-weight:800;color:var(--navy);background:#eef4ff;padding:9px 12px">${fmtCOP(totalPagar)}</td>
             <td></td>
           </tr></tfoot>`:''}
         </table>
