@@ -1109,8 +1109,8 @@
         <div class="fg"><label>Nombre *</label><input type="text" id="eNombre" placeholder="Dr. Juan Pérez"/></div>
         <div class="fg"><label>Factura *</label><input type="text" id="eFactura" placeholder="FE-001"/></div>
         <div class="fg"><label>Valor Entidad</label><input type="number" id="eValorEntidad" placeholder="0" min="0" oninput="calcEgresoNeto()"/></div>
-        <div class="fg"><label>ICA <span style="font-size:10.5px;color:var(--gray-3);font-weight:400">(auto: Valor Entidad×10/1000)</span></label><input type="number" id="eIca" placeholder="0" readonly style="background:var(--gray-0);color:var(--navy)"/></div>
-        <div class="fg"><label>Retención por Honorarios <span style="font-size:10.5px;color:var(--gray-3);font-weight:400">(auto: Valor Entidad×11%)</span></label><input type="number" id="eReteHonorarios" placeholder="0" readonly style="background:var(--gray-0);color:var(--navy)"/></div>
+        <div class="fg"><label>ICA <span style="font-size:10.5px;color:var(--gray-3);font-weight:400">(auto, editable)</span></label><input type="number" id="eIca" placeholder="0" min="0" oninput="calcEgresoNeto(true)"/></div>
+        <div class="fg"><label>Retención por Honorarios <span style="font-size:10.5px;color:var(--gray-3);font-weight:400">(auto, editable)</span></label><input type="number" id="eReteHonorarios" placeholder="0" min="0" oninput="calcEgresoNeto(true)"/></div>
         <div class="fg"><label>Nota Crédito <span style="font-size:10.5px;color:var(--gray-3);font-weight:400">(resta de Valor Entidad)</span></label><input type="number" id="eNotaCredito" placeholder="0" min="0" oninput="calcEgresoNeto()"/></div>
         <div class="fg"><label>Valor Entidad Neto <span style="font-size:10.5px;color:var(--gray-3);font-weight:400">(calculado)</span></label><input type="number" id="eValorEntidadNeto" placeholder="0" readonly style="background:var(--blue-pale);font-weight:700;color:var(--navy)"/></div>
         <div class="fg"><label>Administración</label><input type="number" id="eAdministracion" placeholder="0" min="0"/></div>

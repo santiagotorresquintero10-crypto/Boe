@@ -3324,13 +3324,14 @@ function renderEgresoTable() {
   }
   empty.style.display='none';
 
-  let html = '';
-  egresos.forEach(e => {
+  // Construye el HTML de una factura madre + sus hijas
+  const madreHtml = (e, claveGrupo) => {
     const hijas = e.hijas||[];
     const totalHijas = hijas.reduce((s,h)=>s+(Number(h.valorEspecialista)||0),0);
+    let h = '';
 
     // ── FILA MADRE ──
-    html += `<tr class="egr-madre" onclick="toggleHijas('${e.id}')">
+    h += `<tr class="egr-madre" data-mgroup-row="${escHtml(claveGrupo)}" onclick="toggleHijas('${e.id}')">
       <td class="egr-expand-cell">
         <i class="fa-solid fa-chevron-right egr-expand-icon" id="icon-${e.id}"></i>
       </td>
@@ -3349,34 +3350,101 @@ function renderEgresoTable() {
       </td>
     </tr>`;
 
-    // ── FILAS HIJAS — misma estructura, mismo grid, solo fondo distinto ──
-    hijas.forEach((h, hi) => {
-      html += `<tr class="egr-hija-row" data-parent="${e.id}" style="display:none">
+    // ── FILAS HIJAS ──
+    hijas.forEach((hj) => {
+      h += `<tr class="egr-hija-row" data-parent="${e.id}" data-mgroup-row="${escHtml(claveGrupo)}" style="display:none">
         <td class="egr-expand-cell egr-hija-indent">
           <i class="fa-solid fa-corner-down-right egr-hija-icon"></i>
         </td>
-        <td>${h.honorarioMes||'—'}</td>
-        <td>${escHtml(h.concepto||'—')}</td>
-        <td>${escHtml(h.nombre||'—')}</td>
-        <td>${fmtCOP(h.valorEntidad)}</td>
-        <td>${fmtCOP(h.administracion)}</td>
-        <td class="egr-val-esp">${fmtCOP(h.valorEspecialista)}</td>
-        <td><span class="egr-factura-badge egr-hija-badge">${escHtml(h.factura||'—')}</span></td>
+        <td>${hj.honorarioMes||'—'}</td>
+        <td>${escHtml(hj.concepto||'—')}</td>
+        <td>${escHtml(hj.nombre||'—')}</td>
+        <td>${fmtCOP(hj.valorEntidad)}</td>
+        <td>${fmtCOP(hj.administracion)}</td>
+        <td class="egr-val-esp">${fmtCOP(hj.valorEspecialista)}</td>
+        <td><span class="egr-factura-badge egr-hija-badge">${escHtml(hj.factura||'—')}</span></td>
         <td></td>
       </tr>`;
     });
 
     // ── FILA TOTAL HIJAS ──
     if (hijas.length) {
-      html += `<tr class="egr-total-row" data-parent="${e.id}" style="display:none">
+      h += `<tr class="egr-total-row" data-parent="${e.id}" data-mgroup-row="${escHtml(claveGrupo)}" style="display:none">
         <td colspan="6" class="egr-total-lbl">Total hijas (${hijas.length}):</td>
         <td class="egr-total-val">${fmtCOP(totalHijas)}</td>
         <td colspan="2"></td>
       </tr>`;
     }
+    return h;
+  };
+
+  // ── Agrupar facturas madre por mes (campo honorarioMes tipo "2026-03") ──
+  const grupos = agruparPorMesMadre(egresos);
+  let html = '';
+  grupos.forEach(g => {
+    const colapsado = grupoColapsado[`madre|${g.clave}`] ? 'colapsado' : '';
+    const totalGrupo = g.items.reduce((s,e)=>s+(Number(e.valorEspecialista)||0),0);
+    html += `<tr class="tbl-group-row egr-group-row ${colapsado}" data-group="${escHtml(g.clave)}" onclick="toggleGrupoMadre('${escHtml(g.clave)}',this)">
+      <td colspan="7" class="tbl-group-cell">
+        <i class="fa-solid fa-chevron-down tbl-group-chevron"></i>
+        <i class="fa-solid fa-folder-open tbl-group-folder"></i>
+        <span class="tbl-group-label">${escHtml(g.etiqueta)}</span>
+        <span class="tbl-group-count">${g.items.length} factura${g.items.length!==1?'s':''}</span>
+      </td>
+      <td class="tbl-group-total">${fmtCOP(totalGrupo)}</td>
+      <td></td>
+    </tr>`;
+    g.items.forEach(e => { html += madreHtml(e, g.clave); });
   });
 
   tbody.innerHTML = html;
+
+  // Aplicar estado colapsado inicial de los grupos
+  grupos.forEach(g => {
+    if (grupoColapsado[`madre|${g.clave}`]) {
+      tbody.querySelectorAll(`tr[data-mgroup-row="${cssEscapa(g.clave)}"]`).forEach(tr=>tr.style.display='none');
+    }
+  });
+}
+
+/* Agrupa facturas madre por honorarioMes (desc, sin-mes al final) */
+function agruparPorMesMadre(items){
+  const map = new Map();
+  items.forEach(e => {
+    const clave = (e.honorarioMes||'').trim() || 'sin-mes';
+    if (!map.has(clave)) map.set(clave, []);
+    map.get(clave).push(e);
+  });
+  const claves = [...map.keys()].sort((a,b)=>{
+    if (a === 'sin-mes') return 1;
+    if (b === 'sin-mes') return -1;
+    return b.localeCompare(a);
+  });
+  return claves.map(clave => ({ clave, etiqueta: etiquetaMes(clave), items: map.get(clave) }));
+}
+
+/* Expandir / contraer un grupo de mes de facturas madre */
+window.toggleGrupoMadre = (clave, filaCab) => {
+  const key = `madre|${clave}`;
+  const colapsar = !grupoColapsado[key];
+  grupoColapsado[key] = colapsar;
+  filaCab.classList.toggle('colapsado', colapsar);
+  const tbody = document.getElementById('egresoBody');
+  if (!tbody) return;
+  tbody.querySelectorAll(`tr[data-mgroup-row="${cssEscapa(clave)}"]`).forEach(tr=>{
+    if (colapsar) {
+      tr.style.display = 'none';
+    } else {
+      // Al expandir el grupo: mostrar madres; hijas quedan ocultas hasta abrir cada madre
+      if (tr.classList.contains('egr-madre')) tr.style.display = '';
+      else tr.style.display = 'none';
+      // reset del ícono de expansión de cada madre
+      if (tr.classList.contains('egr-madre')) {
+        const ic = tr.querySelector('.egr-expand-icon');
+        ic?.classList.remove('open');
+      }
+    }
+  });
 }
 
 window.toggleHijas = (id) => {
@@ -3403,25 +3471,35 @@ window.openEgresoModal = (id=null) => {
   document.getElementById('eAdministracion').value = e?.administracion||'';
   document.getElementById('eValorEspecialista').value = e?.valorEspecialista||'';
   document.getElementById('eNotas').value = e?.notas||'';
-  calcEgresoNeto();
+  // Editar: respetar ICA/Rete guardados (pueden ser manuales). Nuevo: auto-calcular.
+  if (e) {
+    document.getElementById('eIca').value = (e.ica ?? '') === '' ? '' : e.ica;
+    document.getElementById('eReteHonorarios').value = (e.reteHonorarios ?? '') === '' ? '' : e.reteHonorarios;
+    calcEgresoNeto(true);   // recalcula solo el neto, sin tocar ICA/Rete
+  } else {
+    calcEgresoNeto();       // egreso nuevo: ICA y Rete automáticos
+  }
   localHijas = e?.hijas ? JSON.parse(JSON.stringify(e.hijas)) : [];
   renderHijasTable();
   document.getElementById('egresoModal').classList.add('open');
 };
 
-window.calcEgresoNeto = () => {
+window.calcEgresoNeto = (edicionManual) => {
   const entidad = Number(document.getElementById('eValorEntidad')?.value)||0;
   const nota    = Number(document.getElementById('eNotaCredito')?.value)||0;
-
-  // ICA = REDONDEAR(Valor Entidad × 10 / 1000)   → tarifa 10 x mil
-  const ica = Math.round(entidad * 10 / 1000);
-  // Retención por Honorarios = Valor Entidad × 11%
-  const reteHon = Math.round(entidad * 0.11);
-
   const elIca = document.getElementById('eIca');
   const elRet = document.getElementById('eReteHonorarios');
-  if (elIca) elIca.value = ica;
-  if (elRet) elRet.value = reteHon;
+
+  // Si NO es edición manual de ICA/Rete, recalcular desde Valor Entidad:
+  //   ICA = REDONDEAR(Valor Entidad × 10 / 1000)   (10 x mil)
+  //   Retención por Honorarios = Valor Entidad × 11%
+  if (!edicionManual) {
+    if (elIca) elIca.value = Math.round(entidad * 10 / 1000);
+    if (elRet) elRet.value = Math.round(entidad * 0.11);
+  }
+
+  const ica     = Number(elIca?.value)||0;
+  const reteHon = Number(elRet?.value)||0;
 
   // Valor Entidad Neto = Valor Entidad − Nota Crédito − ICA − Retención
   const neto = entidad - nota - ica - reteHon;
@@ -3737,8 +3815,23 @@ window.filtrarTablaBusqueda = (tablaId, texto) => {
 
   filas.forEach(tr => {
     const match = !q || (tr.getAttribute('data-search')||'').includes(q);
-    tr.style.display = match ? '' : 'none';
+    // Respetar grupo colapsado cuando NO hay búsqueda activa
+    const clave = tr.getAttribute('data-group-row');
+    const grupoCerrado = !q && clave && grupoColapsado[`${tablaId}|${clave}`];
+    tr.style.display = (match && !grupoCerrado) ? '' : 'none';
     if (match){ visibles++; total += Number(tr.getAttribute('data-pagar'))||0; }
+  });
+
+  // Encabezados de grupo: durante búsqueda se ocultan los grupos sin coincidencias
+  card.querySelectorAll('.tbl-group-row').forEach(gr => {
+    const clave = gr.getAttribute('data-group');
+    if (q){
+      const hayVisibles = [...card.querySelectorAll(`tr[data-group-row="${cssEscapa(clave)}"]`)]
+        .some(tr => tr.style.display !== 'none');
+      gr.style.display = hayVisibles ? '' : 'none';
+    } else {
+      gr.style.display = '';   // sin búsqueda, todos los encabezados visibles
+    }
   });
 
   // Mensaje "sin resultados"
@@ -3765,6 +3858,60 @@ window.limpiarBusquedaTabla = (tablaId) => {
   if (inp) inp.focus();
 };
 
+/* ══ AGRUPAMIENTO POR MES ══ */
+const grupoColapsado = {};   // { "tablaId|clave": true }  → colapsado
+const MESES_NOMBRE = ['Enero','Febrero','Marzo','Abril','Mayo','Junio',
+  'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+
+/* Agrupa filas por mes (campo f.mes tipo "2026-03"). Orden descendente (más reciente primero). */
+function agruparPorMes(filas){
+  const map = new Map();
+  filas.forEach(f => {
+    const mes = (f.mes||'').trim();
+    const clave = mes || 'sin-mes';
+    if (!map.has(clave)) map.set(clave, []);
+    map.get(clave).push(f);
+  });
+  const claves = [...map.keys()].sort((a,b)=>{
+    if (a === 'sin-mes') return 1;
+    if (b === 'sin-mes') return -1;
+    return b.localeCompare(a);   // más reciente primero
+  });
+  return claves.map(clave => ({
+    clave,
+    etiqueta: etiquetaMes(clave),
+    filas: map.get(clave),
+  }));
+}
+
+/* "2026-03" → "Marzo 2026"; "sin-mes" → "Sin mes asignado" */
+function etiquetaMes(clave){
+  if (clave === 'sin-mes') return 'Sin mes asignado';
+  const m = clave.match(/^(\d{4})-(\d{1,2})/);
+  if (m){
+    const idx = parseInt(m[2],10) - 1;
+    if (idx >= 0 && idx < 12) return `${MESES_NOMBRE[idx]} ${m[1]}`;
+  }
+  return clave;
+}
+
+/* Expandir / contraer un grupo de mes */
+window.toggleGrupoMes = (tablaId, clave, filaCab) => {
+  const key = `${tablaId}|${clave}`;
+  const colapsar = !grupoColapsado[key];
+  grupoColapsado[key] = colapsar;
+
+  const card = document.getElementById('tcard-'+tablaId) || filaCab.closest('.egr-custom-card, .egr-madre-wrap');
+  if (!card) return;
+  filaCab.classList.toggle('colapsado', colapsar);
+  card.querySelectorAll(`tr[data-group-row="${cssEscapa(clave)}"]`).forEach(tr=>{
+    tr.style.display = colapsar ? 'none' : '';
+  });
+};
+
+/* Escapa comillas para selectores de atributo */
+function cssEscapa(s){ return String(s||'').replace(/"/g,'\\"'); }
+
 function renderCustomTables() {
   const box = document.getElementById('egresoCustomTables');
   if (!box) return;
@@ -3780,7 +3927,7 @@ function renderCustomTables() {
       : allFilas;
     const totalPagar = filas.reduce((s,f)=>s+(Number(f.valorPagar)||0),0);
 
-    const rows = filas.map((f)=>{
+    const filaHtml = (f)=>{
       const realIdx = allFilas.indexOf(f); // real index regardless of filter
       // Texto indexado para el buscador (factura, nombre, tipo de persona, mes)
       const blob = normBusq([f.factura, f.nombre, f.tipoPersona, f.mes].join(' '));
@@ -3808,6 +3955,24 @@ function renderCustomTables() {
           </div>
         </td>
       </tr>`;
+    };
+
+    // ── Agrupar filas por mes (encabezados colapsables) ──
+    const grupos = agruparPorMes(filas);
+    const rows = grupos.map(g => {
+      const colapsado = grupoColapsado[`${t.id}|${g.clave}`] ? 'colapsado' : '';
+      const totalGrupo = g.filas.reduce((s,f)=>s+(Number(f.valorPagar)||0),0);
+      const cab = `<tr class="tbl-group-row ${colapsado}" data-group="${escHtml(g.clave)}" onclick="toggleGrupoMes('${t.id}','${escHtml(g.clave)}',this)">
+        <td colspan="14" class="tbl-group-cell">
+          <i class="fa-solid fa-chevron-down tbl-group-chevron"></i>
+          <i class="fa-solid fa-folder-open tbl-group-folder"></i>
+          <span class="tbl-group-label">${escHtml(g.etiqueta)}</span>
+          <span class="tbl-group-count">${g.filas.length} factura${g.filas.length!==1?'s':''}</span>
+        </td>
+        <td class="td-money tbl-group-total">${fmtCOP(totalGrupo)}</td>
+      </tr>`;
+      const cuerpo = g.filas.map(f => filaHtml(f).replace('<tr ', `<tr data-group-row="${escHtml(g.clave)}" `)).join('');
+      return cab + cuerpo;
     }).join('');
 
     return `<div class="egr-custom-card" id="tcard-${t.id}">
@@ -3845,7 +4010,7 @@ function renderCustomTables() {
         <div class="ech-search">
           <i class="fa-solid fa-magnifying-glass ech-search-ico"></i>
           <input type="text" class="ech-search-input" id="busq-${t.id}"
-            placeholder="Buscar por factura, nombre, tipo, mes…"
+            placeholder="Buscar por factura"
             value="${escHtml(busquedaTablas[t.id]||'')}"
             oninput="filtrarTablaBusqueda('${t.id}', this.value)"/>
           <button class="ech-search-x" title="Limpiar" onclick="limpiarBusquedaTabla('${t.id}')">&times;</button>

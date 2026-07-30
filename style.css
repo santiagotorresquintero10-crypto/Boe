@@ -2769,3 +2769,23 @@ input,select,textarea{font-family:inherit;font-size:14px;}
 @media (max-width:900px){
   .ech-search-input { width:130px; }
 }
+
+/* ══ AGRUPAMIENTO POR MES ══ */
+.tbl-group-row { cursor:pointer; background:linear-gradient(135deg,#eef4ff,#e3ecff); transition:background .15s; user-select:none; }
+.tbl-group-row:hover { background:linear-gradient(135deg,#e3ecff,#d6e4ff); }
+.tbl-group-cell {
+  padding:9px 12px !important; font-weight:800; color:var(--navy);
+  font-size:12px; letter-spacing:.02em; border-bottom:1px solid var(--gray-1);
+}
+.tbl-group-chevron { font-size:10px; margin-right:7px; transition:transform .2s; color:var(--blue); }
+.tbl-group-row.colapsado .tbl-group-chevron { transform:rotate(-90deg); }
+.tbl-group-folder { font-size:12px; margin-right:8px; color:var(--blue); }
+.tbl-group-label { margin-right:10px; }
+.tbl-group-count {
+  font-size:10.5px; font-weight:700; color:var(--blue);
+  background:rgba(37,99,235,.12); padding:2px 8px; border-radius:20px;
+}
+.tbl-group-total {
+  font-weight:800 !important; color:var(--navy) !important;
+  background:#e3ecff !important; border-bottom:1px solid var(--gray-1);
+}
