@@ -3286,17 +3286,28 @@ function initEgresos() {
   // Cargar logo UROEXPERTOS en el encabezado
   const logoImg = document.getElementById('uroLogoHeader');
   if (logoImg && typeof UROEXPERTOS_LOGO_B64 !== 'undefined') logoImg.src = UROEXPERTOS_LOGO_B64;
-  // Cargar estado guardado de carpetas y luego renderizar
-  cargarGrupoColapsado().then(() => {
-    renderEgresoTable();
-    renderCustomTables();
-  });
+  // El estado de carpetas se carga en subscribeEgresos (al login).
+  // Salvaguarda: si aún no se cargó, hacerlo ahora y re-renderizar.
+  if (!_grupoEstadoCargado) {
+    _grupoEstadoCargado = true;
+    cargarGrupoColapsado().then(() => { renderEgresoTable(); renderCustomTables(); });
+  }
   renderEgresoTable();
   renderCustomTables();
 }
 
 /* ══ SUSCRIPCIÓN FIRESTORE ══ */
+let _grupoEstadoCargado = false;
 function subscribeEgresos() {
+  // Cargar el estado de carpetas UNA sola vez, temprano, antes de que
+  // los snapshots rendericen. Al terminar, re-renderiza para aplicarlo.
+  if (!_grupoEstadoCargado) {
+    _grupoEstadoCargado = true;
+    cargarGrupoColapsado().then(() => {
+      renderEgresoTable();
+      renderCustomTables();
+    });
+  }
   onSnapshot(collection(db,'egresos'), snap => {
     egresos = snap.docs.map(d=>({id:d.id,...d.data()}));
     renderEgresoTable();
@@ -4119,9 +4130,23 @@ function renderCustomTables() {
       </div>
     </div>`;
   }).join('');
-}
 
-/* ══ MODAL FILA TABLA PERSONALIZADA ══ */
+  // Aplicar el estado guardado de carpetas colapsadas (ocultar sus filas)
+  // y re-aplicar cualquier búsqueda activa tras el re-render.
+  tablasEgreso.forEach(t => {
+    const card = document.getElementById('tcard-'+t.id);
+    if (!card) return;
+    card.querySelectorAll('.tbl-group-row').forEach(gr => {
+      const clave = gr.getAttribute('data-group');
+      if (grupoColapsado[`${t.id}|${clave}`]) {
+        gr.classList.add('colapsado');
+        card.querySelectorAll(`tr[data-group-row="${cssEscapa(clave)}"]`)
+          .forEach(tr => tr.style.display = 'none');
+      }
+    });
+    if (busquedaTablas[t.id]) filtrarTablaBusqueda(t.id, busquedaTablas[t.id]);
+  });
+}
 window.openTablaRowModal = (tablaId, idx) => {
   editTablaRowTablaId = tablaId;
   editTablaRowIdx     = idx;
