@@ -2789,3 +2789,16 @@ input,select,textarea{font-family:inherit;font-size:14px;}
   font-weight:800 !important; color:var(--navy) !important;
   background:#e3ecff !important; border-bottom:1px solid var(--gray-1);
 }
+
+/* ══ INDICADOR DE PAGO EN FACTURAS MADRE ══ */
+.pago-badge {
+  width:28px; height:28px; border-radius:6px;
+  display:inline-flex; align-items:center; justify-content:center;
+  font-size:13px; cursor:help; flex-shrink:0;
+}
+.pago-badge.pagada    { background:#e8f5e9; color:#2e7d32; }
+.pago-badge.pendiente { background:var(--gray-1); color:var(--gray-3); }
+
+/* Grupo fuera del alcance de la búsqueda (carpeta cerrada mientras se busca) */
+.tbl-group-row.grupo-fuera-busqueda { opacity:.5; }
+.tbl-group-row.grupo-fuera-busqueda .tbl-group-count::after { content:" · fuera de búsqueda"; font-weight:600; }

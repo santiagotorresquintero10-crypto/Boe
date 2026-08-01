@@ -3286,6 +3286,11 @@ function initEgresos() {
   // Cargar logo UROEXPERTOS en el encabezado
   const logoImg = document.getElementById('uroLogoHeader');
   if (logoImg && typeof UROEXPERTOS_LOGO_B64 !== 'undefined') logoImg.src = UROEXPERTOS_LOGO_B64;
+  // Cargar estado guardado de carpetas y luego renderizar
+  cargarGrupoColapsado().then(() => {
+    renderEgresoTable();
+    renderCustomTables();
+  });
   renderEgresoTable();
   renderCustomTables();
 }
@@ -3315,6 +3320,13 @@ function subscribeEgresos() {
 }
 
 /* ══ TABLA EGRESO (madre/hija) ══ */
+/* "2026-07-15" → "15/07/2026" (fecha legible corta) */
+function fmtFechaLegible(iso){
+  if (!iso) return '';
+  const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : iso;
+}
+
 function renderEgresoTable() {
   const tbody = document.getElementById('egresoBody');
   const empty = document.getElementById('egresoEmpty');
@@ -3344,6 +3356,9 @@ function renderEgresoTable() {
       <td><span class="egr-factura-badge">${escHtml(e.factura||'—')}</span></td>
       <td>
         <div class="tbl-actions">
+          ${e.fechaPago
+            ? `<span class="pago-badge pagada" title="Pagada el ${fmtFechaLegible(e.fechaPago)}"><i class="fa-solid fa-circle-check"></i></span>`
+            : `<span class="pago-badge pendiente" title="Pendiente de pago"><i class="fa-solid fa-clock"></i></span>`}
           <button class="act-btn edit" onclick="event.stopPropagation();openEgresoModal('${e.id}')"><i class="fa-solid fa-pen"></i></button>
           <button class="act-btn del"  onclick="event.stopPropagation();deleteEgreso('${e.id}')"><i class="fa-solid fa-trash"></i></button>
         </div>
@@ -3428,6 +3443,7 @@ window.toggleGrupoMadre = (clave, filaCab) => {
   const key = `madre|${clave}`;
   const colapsar = !grupoColapsado[key];
   grupoColapsado[key] = colapsar;
+  persistirGrupoColapsado();
   filaCab.classList.toggle('colapsado', colapsar);
   const tbody = document.getElementById('egresoBody');
   if (!tbody) return;
@@ -3470,6 +3486,7 @@ window.openEgresoModal = (id=null) => {
   document.getElementById('eNotaCredito').value = e?.notaCredito||'';
   document.getElementById('eAdministracion').value = e?.administracion||'';
   document.getElementById('eValorEspecialista').value = e?.valorEspecialista||'';
+  document.getElementById('eFechaPago').value = e?.fechaPago||'';
   document.getElementById('eNotas').value = e?.notas||'';
   // Editar: respetar ICA/Rete guardados (pueden ser manuales). Nuevo: auto-calcular.
   if (e) {
@@ -3618,6 +3635,7 @@ window.saveEgreso = async () => {
     valorEntidadNeto:  Number(document.getElementById('eValorEntidadNeto').value)||0,
     administracion:    Number(document.getElementById('eAdministracion').value)||0,
     valorEspecialista: Number(document.getElementById('eValorEspecialista').value)||0,
+    fechaPago:         document.getElementById('eFechaPago').value||'',
     notas:        document.getElementById('eNotas').value.trim(),
     hijas,
     updatedAt: serverTimestamp()
@@ -3813,24 +3831,47 @@ window.filtrarTablaBusqueda = (tablaId, texto) => {
   const filas = card.querySelectorAll('.egr-custom-table tbody tr[data-search]');
   let visibles = 0, total = 0;
 
+  // ¿Cuántos grupos hay y cuántos están abiertos? Si TODOS abiertos → buscar en todo.
+  const grupos = [...card.querySelectorAll('.tbl-group-row')];
+  const totalGrupos = grupos.length;
+  const gruposAbiertos = grupos.filter(gr => {
+    const clave = gr.getAttribute('data-group');
+    return !grupoColapsado[`${tablaId}|${clave}`];
+  }).length;
+  // Si hay grupos y no todos están abiertos, la búsqueda se limita a los abiertos
+  const limitarAAbiertos = totalGrupos > 0 && gruposAbiertos < totalGrupos;
+
   filas.forEach(tr => {
-    const match = !q || (tr.getAttribute('data-search')||'').includes(q);
-    // Respetar grupo colapsado cuando NO hay búsqueda activa
     const clave = tr.getAttribute('data-group-row');
-    const grupoCerrado = !q && clave && grupoColapsado[`${tablaId}|${clave}`];
-    tr.style.display = (match && !grupoCerrado) ? '' : 'none';
-    if (match){ visibles++; total += Number(tr.getAttribute('data-pagar'))||0; }
+    const grupoCerrado = clave && grupoColapsado[`${tablaId}|${clave}`];
+    // Con búsqueda: si limitamos a abiertos, las filas de grupos cerrados NO participan
+    const participa = !(limitarAAbiertos && grupoCerrado);
+    const match = participa && (!q || (tr.getAttribute('data-search')||'').includes(q));
+    // Sin búsqueda: respetar el colapso normal
+    const mostrar = q ? match : !grupoCerrado;
+    tr.style.display = mostrar ? '' : 'none';
+    if (q && match){ visibles++; total += Number(tr.getAttribute('data-pagar'))||0; }
+    if (!q){ total += (!grupoCerrado ? (Number(tr.getAttribute('data-pagar'))||0) : 0); }
   });
 
-  // Encabezados de grupo: durante búsqueda se ocultan los grupos sin coincidencias
+  // Encabezados de grupo
   card.querySelectorAll('.tbl-group-row').forEach(gr => {
     const clave = gr.getAttribute('data-group');
+    const cerrado = grupoColapsado[`${tablaId}|${clave}`];
     if (q){
-      const hayVisibles = [...card.querySelectorAll(`tr[data-group-row="${cssEscapa(clave)}"]`)]
-        .some(tr => tr.style.display !== 'none');
-      gr.style.display = hayVisibles ? '' : 'none';
+      if (limitarAAbiertos && cerrado){
+        // Grupo cerrado no participa en la búsqueda: mostrar encabezado atenuado
+        gr.style.display = '';
+        gr.classList.add('grupo-fuera-busqueda');
+      } else {
+        gr.classList.remove('grupo-fuera-busqueda');
+        const hayVisibles = [...card.querySelectorAll(`tr[data-group-row="${cssEscapa(clave)}"]`)]
+          .some(tr => tr.style.display !== 'none');
+        gr.style.display = hayVisibles ? '' : 'none';
+      }
     } else {
-      gr.style.display = '';   // sin búsqueda, todos los encabezados visibles
+      gr.style.display = '';
+      gr.classList.remove('grupo-fuera-busqueda');
     }
   });
 
@@ -3860,6 +3901,31 @@ window.limpiarBusquedaTabla = (tablaId) => {
 
 /* ══ AGRUPAMIENTO POR MES ══ */
 const grupoColapsado = {};   // { "tablaId|clave": true }  → colapsado
+
+/* Persistencia del estado de carpetas (grupos por mes) en Firestore.
+   Se guarda con debounce para no escribir en cada clic. */
+let _grupoPersistTimer = null;
+function persistirGrupoColapsado(){
+  clearTimeout(_grupoPersistTimer);
+  _grupoPersistTimer = setTimeout(() => {
+    const soloCerrados = {};
+    Object.keys(grupoColapsado).forEach(k => { if (grupoColapsado[k]) soloCerrados[k] = true; });
+    setDoc(doc(db,'uiPrefs','egresosGrupos'), { colapsados: soloCerrados, updatedAt: serverTimestamp() })
+      .catch(e => console.warn('No se pudo guardar estado de carpetas:', e));
+  }, 500);
+}
+
+/* Carga el estado guardado al iniciar la sesión de UROEXPERTOS */
+async function cargarGrupoColapsado(){
+  try {
+    const snap = await getDoc(doc(db,'uiPrefs','egresosGrupos'));
+    if (snap.exists()){
+      const data = snap.data()?.colapsados || {};
+      Object.keys(grupoColapsado).forEach(k => delete grupoColapsado[k]);
+      Object.keys(data).forEach(k => { grupoColapsado[k] = true; });
+    }
+  } catch(e){ console.warn('No se pudo cargar estado de carpetas:', e); }
+}
 const MESES_NOMBRE = ['Enero','Febrero','Marzo','Abril','Mayo','Junio',
   'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
 
@@ -3900,6 +3966,7 @@ window.toggleGrupoMes = (tablaId, clave, filaCab) => {
   const key = `${tablaId}|${clave}`;
   const colapsar = !grupoColapsado[key];
   grupoColapsado[key] = colapsar;
+  persistirGrupoColapsado();
 
   const card = document.getElementById('tcard-'+tablaId) || filaCab.closest('.egr-custom-card, .egr-madre-wrap');
   if (!card) return;
