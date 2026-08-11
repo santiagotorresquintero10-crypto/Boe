@@ -3782,6 +3782,7 @@ window.onIdentChange = async (tablaId, selectEl) => {
       const valorPagar = valorFactura;
 
       nuevas.push({
+        rowId:        genRowId(),
         identId:      egresoId,
         identIds:     [egresoId],
         factura:      h.factura||'',
@@ -4252,7 +4253,11 @@ window.calcValorPagar = () => {
   if (el) { el.value = total; el.style.color = total < 0 ? 'var(--red)' : 'var(--navy)'; }
 };
 
+let _guardandoFila = false;   // candado anti-reentrada (doble clic / doble evento)
 window.saveTablaRow = async () => {
+  // Si ya hay un guardado en curso, ignorar (evita doble ejecución)
+  if (_guardandoFila) return;
+
   const tablaId = editTablaRowTablaId;
   const tabla   = tablasEgreso.find(t=>t.id===tablaId);
   if (!tabla) return;
@@ -4264,7 +4269,11 @@ window.saveTablaRow = async () => {
     : (tablaForIdent?._selectedIdent ? [tablaForIdent._selectedIdent] : []);
   const currentIdentId  = currentIdentIds[0]||'';
 
+  const esEdicion = (editTablaRowIdx !== null && editTablaRowIdx !== undefined);
+
   const fila = {
+    // ID único estable por fila (para editar/eliminar sin ambigüedad y detectar duplicados)
+    rowId:        esEdicion ? (tabla.filas?.[editTablaRowIdx]?.rowId || genRowId()) : genRowId(),
     identId:      currentIdentId,   // primary (backward compat)
     identIds:     currentIdentIds,  // all selected
     factura:      document.getElementById('trFactura').value.trim(),
@@ -4290,7 +4299,7 @@ window.saveTablaRow = async () => {
   if (facturaNueva) {
     const duplicada = filas.some((f, i) => {
       // Al editar, ignorar la propia fila que se está editando
-      if (editTablaRowIdx !== null && editTablaRowIdx !== undefined && i === editTablaRowIdx) return false;
+      if (esEdicion && i === editTablaRowIdx) return false;
       return (f.factura||'').trim().toLowerCase() === facturaNueva;
     });
     if (duplicada) {
@@ -4299,7 +4308,13 @@ window.saveTablaRow = async () => {
     }
   }
 
-  if (editTablaRowIdx !== null && editTablaRowIdx !== undefined) {
+  // Activar candado y deshabilitar el botón ANTES del await
+  _guardandoFila = true;
+  const btnGuardar = document.querySelector('#tablaRowModal .btn-primary');
+  const btnHtmlPrev = btnGuardar?.innerHTML;
+  if (btnGuardar) { btnGuardar.disabled = true; btnGuardar.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Guardando...'; }
+
+  if (esEdicion) {
     filas[editTablaRowIdx] = fila;
   } else {
     filas.push(fila);
@@ -4309,8 +4324,19 @@ window.saveTablaRow = async () => {
     await updateDoc(doc(db,'tablasEgreso',tablaId),{filas, updatedAt:serverTimestamp()});
     toast('Fila guardada.','success');
     closeTablaRowModal();
-  } catch(e) { toast('Error: '+e.message,'error'); }
+  } catch(e) {
+    toast('Error: '+e.message,'error');
+  } finally {
+    // Liberar candado y restaurar botón siempre
+    _guardandoFila = false;
+    if (btnGuardar) { btnGuardar.disabled = false; btnGuardar.innerHTML = btnHtmlPrev; }
+  }
 };
+
+/* Genera un ID único para cada fila (timestamp + aleatorio) */
+function genRowId(){
+  return 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2,8);
+}
 
 window.deleteTablaRow = async (tablaId, idx) => {
   if (!confirm('¿Eliminar esta fila?')) return;
