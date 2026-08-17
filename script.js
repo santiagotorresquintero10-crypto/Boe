@@ -7551,13 +7551,13 @@ function ct_renderCalMes() {
   const daysInMonth = new Date(y,m+1,0).getDate();
   const today = new Date().toISOString().slice(0,10);
 
-  let html = `<div class="ct_turnos-cal-grid">`;
-  DIAS_SEMANA.forEach(d => { html += `<div class="ct_turnos-cal-dow">${d}</div>`; });
+  let html = `<div class="turnos-cal-grid">`;
+  DIAS_SEMANA.forEach(d => { html += `<div class="turnos-cal-dow">${d}</div>`; });
 
   // Días del mes anterior
   const prevDays = new Date(y,m,0).getDate();
   for(let i=firstDay-1; i>=0; i--) {
-    html += `<div class="ct_turnos-cal-day other-month"><div class="ct_turnos-day-num">${prevDays-i}</div></div>`;
+    html += `<div class="turnos-cal-day other-month"><div class="turnos-day-num">${prevDays-i}</div></div>`;
   }
 
   // Días del mes actual
@@ -7581,15 +7581,15 @@ function ct_renderCalMes() {
       const cls = t.trayecto==='IDA'?'ida':t.trayecto==='REGRESO'?'regreso':'default';
       // Mostrar SOLO nombre del especialista
       const nombre = (t.especialista||'—');
-      return `<div class="ct_turnos-cal-event ${cls}"
+      return `<div class="turnos-cal-event ${cls}"
         onclick="event.stopPropagation();ct_openTurnoModal('${t.id}')"
         title="${escHtml(t.especialista||'')} · ${t.trayecto||''}">
         <span class="cal-ev-name">${escHtml(nombre)}</span>
       </div>`;
     }).join('');
 
-    html += `<div class="ct_turnos-cal-day ${isToday?'today':''}" onclick="ct_openTurnoModal(null,'${dateStr}')">
-      <div class="ct_turnos-day-num">${d}</div>
+    html += `<div class="turnos-cal-day ${isToday?'today':''}" onclick="ct_openTurnoModal(null,'${dateStr}')">
+      <div class="turnos-day-num">${d}</div>
       ${events}
     </div>`;
   }
@@ -7598,7 +7598,7 @@ function ct_renderCalMes() {
   const totalCells = firstDay + daysInMonth;
   const remaining = (7 - (totalCells % 7)) % 7;
   for(let d=1; d<=remaining; d++) {
-    html += `<div class="ct_turnos-cal-day other-month"><div class="ct_turnos-day-num">${d}</div></div>`;
+    html += `<div class="turnos-cal-day other-month"><div class="turnos-day-num">${d}</div></div>`;
   }
 
   html += '</div>';
@@ -7704,7 +7704,7 @@ window.ct_renderTurnosTabla = () => {
 
   container.innerHTML = `
     <div style="overflow-x:auto">
-      <table class="ct_turnos-erp-table">
+      <table class="turnos-erp-table">
         <thead>
           <!-- Fila de grupos -->
           <tr class="erp-grp-row">
