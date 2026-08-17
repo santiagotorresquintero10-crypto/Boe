@@ -294,7 +294,7 @@ function renderMenuGrupos(){
   const cont = document.getElementById('menuGruposContainer');
   const div  = document.getElementById('menuGruposDivider');
   if (!cont) return;
-  if (!menuGrupos.length){ cont.innerHTML=''; if(div) div.style.display='none'; return; }
+  if (!menuGrupos.length){ cont.innerHTML=''; if(div) div.style.display='none'; sincronizarModulosFijos(); return; }
   if (div) div.style.display='block';
 
   cont.innerHTML = menuGrupos.map((g, gi)=>{
@@ -324,6 +324,48 @@ function renderMenuGrupos(){
       <div class="menu-grupo-items">${items}</div>
     </div>`;
   }).join('');
+
+  sincronizarModulosFijos();
+}
+
+/* Oculta del menú fijo los módulos que ya están dentro de algún grupo
+   (evita que aparezcan duplicados: una vez en el grupo y otra abajo). */
+function sincronizarModulosFijos(){
+  // Claves de todos los módulos que están dentro de algún grupo
+  const enGrupos = new Set();
+  menuGrupos.forEach(g => (g.modulos||[]).forEach(m => enGrupos.add(m)));
+
+  // Recorrer los ítems fijos del menú (los que llaman navigate('clave',this))
+  Object.keys(MODULOS_CATALOGO).forEach(clave => {
+    const item = document.querySelector(`.sidebar-nav > .nav-item[onclick*="'${clave}'"]`);
+    if (item) item.style.display = enGrupos.has(clave) ? 'none' : '';
+  });
+
+  // Ocultar etiquetas de sección (Principal/Gestión/Análisis) que quedaron sin ítems visibles
+  sincronizarEtiquetasSeccion();
+}
+
+/* Oculta una etiqueta de sección si todos sus ítems están ocultos */
+function sincronizarEtiquetasSeccion(){
+  const nav = document.querySelector('.sidebar-nav');
+  if (!nav) return;
+  const hijos = [...nav.children];
+  const esEtiqueta = (el) => el.classList.contains('nav-group-label')
+    || (el.tagName === 'DIV' && el.querySelector('.nav-group-label'));
+
+  hijos.forEach((el, i) => {
+    if (!esEtiqueta(el)) return;
+    // La sección "Principal" (div con botón +) nunca se oculta: tiene el botón de crear grupo
+    if (el.tagName === 'DIV' && el.querySelector('.nav-group-label')) return;
+    // ¿Hay algún nav-item visible entre esta etiqueta y la siguiente?
+    let hayVisible = false;
+    for (let j=i+1; j<hijos.length; j++){
+      const sib = hijos[j];
+      if (esEtiqueta(sib)) break;
+      if (sib.classList.contains('nav-item') && sib.style.display !== 'none'){ hayVisible = true; break; }
+    }
+    el.style.display = hayVisible ? '' : 'none';
+  });
 }
 
 window.toggleMenuGrupo = (gid) => {
