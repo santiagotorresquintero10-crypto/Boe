@@ -6026,9 +6026,9 @@ window.cl_initEgresos = cl_initEgresos;
    COMPROBANTE DE EGRESO
 ══════════════════════════════════════════════════ */
 
-let compLogoBase64 = '';
+let cl_compLogoBase64 = '';
 
-const MESES_COMP = {
+const cl_MESES_COMP = {
   '01':'ENERO','02':'FEBRERO','03':'MARZO','04':'ABRIL','05':'MAYO','06':'JUNIO',
   '07':'JULIO','08':'AGOSTO','09':'SEPTIEMBRE','10':'OCTUBRE','11':'NOVIEMBRE','12':'DICIEMBRE'
 };
@@ -6049,8 +6049,8 @@ window.cl_openComprobanteModal = () => {
   cl_onCompFechaChange();
 
   // Logo guardado
-  if (compLogoBase64) {
-    document.getElementById('compLogoImgV2').src = compLogoBase64;
+  if (cl_compLogoBase64) {
+    document.getElementById('compLogoImgV2').src = cl_compLogoBase64;
     document.getElementById('compLogoImgV2').style.display = 'block';
     document.getElementById('compLogoPlaceholderV2').style.display = 'none';
   }
@@ -6079,8 +6079,8 @@ window.cl_handleCompLogo = (e) => {
   if (!file) return;
   const r = new FileReader();
   r.onload = ev => {
-    compLogoBase64 = ev.target.result;
-    document.getElementById('compLogoImgV2').src = compLogoBase64;
+    cl_compLogoBase64 = ev.target.result;
+    document.getElementById('compLogoImgV2').src = cl_compLogoBase64;
     document.getElementById('compLogoImgV2').style.display = 'block';
     document.getElementById('compLogoPlaceholderV2').style.display = 'none';
   };
@@ -6138,7 +6138,7 @@ window.cl_onCompIPSChange = () => {
   const meses = [...new Set((tabla.filas||[]).map(f=>f.mes).filter(Boolean))].sort();
   selMes.innerHTML = '<option value="">— Seleccionar —</option>'
     + meses.map(m=>{
-        const label = MESES_COMP[m.slice(5,7)] || m;
+        const label = cl_MESES_COMP[m.slice(5,7)] || m;
         return `<option value="${m}">${label}</option>`;
       }).join('');
 
@@ -6152,7 +6152,7 @@ window.cl_onCompIPSChange = () => {
 window.cl_onCompMesChange = () => {
   const mes = document.getElementById('compMesV2').value;
   if (mes) {
-    const label = MESES_COMP[mes.slice(5,7)] || mes;
+    const label = cl_MESES_COMP[mes.slice(5,7)] || mes;
     document.getElementById('compMesValV2').value = label;
   }
   cl_autocompletarFinanciero();
