@@ -192,6 +192,7 @@ function subscribeAll(){
     }).catch(()=>{});
     cargarMenuGrupos();
     cargarNombreUro2();
+    cargarNombreTurnos2();
   }
   onSnapshot(query(collection(db,'doctors'),orderBy('createdAt','desc')),snap=>{
     doctors=snap.docs.map(d=>({id:d.id,...d.data()}));
@@ -235,7 +236,7 @@ window.navigate = (view,el) => {
   document.getElementById('view-'+view)?.classList.add('active');
   const sideItem=document.querySelector(`.nav-item[onclick*="'${view}'"]`);
   if(sideItem) sideItem.classList.add('active');
-  const labels={dashboard:'Dashboard',doctores:'Clientes',kanban:'Tablero Kanban',tareas:'Tareas',chat:'Chat del equipo',equipo:'Equipo',alertas:'Alertas',calendario:'Calendario',reportes:'Reportes',resumen:'Resumen de Procesos',egresos:'UROEXPERTOS',turnos:'Cuadro de Turnos',extraccion:'Extracción de Datos',uroexpertos2:'Nueva Vista'};
+  const labels={dashboard:'Dashboard',doctores:'Clientes',kanban:'Tablero Kanban',tareas:'Tareas',chat:'Chat del equipo',equipo:'Equipo',alertas:'Alertas',calendario:'Calendario',reportes:'Reportes',resumen:'Resumen de Procesos',egresos:'UROEXPERTOS',turnos:'Cuadro de Turnos',extraccion:'Extracción de Datos',uroexpertos2:'Nueva Vista',turnos2:'Nueva Vista Turnos'};
   document.getElementById('breadcrumb').textContent=labels[view]||view;
   if(window.innerWidth<=768){ document.getElementById('sidebar').classList.remove('mobile-open'); document.getElementById('sidebarOverlay').classList.remove('open'); }
   if(view==='tareas') applyTareaFilters();
@@ -246,6 +247,7 @@ window.navigate = (view,el) => {
   if(view==='egresos') initEgresos();
   if(view==='uroexpertos2') { cl_subscribeEgresos(); cl_initEgresos(); }
   if(view==='turnos') initTurnos();
+  if(view==='turnos2') { ct_subscribeTurnos(); ct_initTurnos(); }
   if(view==='extraccion') extCargarListaPlantillas();
   if(view==='reportes') reenviarDatosReportes();
 };
@@ -269,6 +271,7 @@ const MODULOS_CATALOGO = {
   resumen:    { label:'Resumen Procesos',    icon:'fa-chart-pie' },
   egresos:    { label:'UROEXPERTOS',         icon:'fa-file-invoice-dollar' },
   uroexpertos2: { label:'Nueva Vista',        icon:'fa-file-invoice-dollar' },
+  turnos2:      { label:'Nueva Vista Turnos',  icon:'fa-calendar-days' },
   turnos:     { label:'Cuadro de Turnos',    icon:'fa-calendar-days' },
   reportes:   { label:'Reportes',            icon:'fa-chart-bar' },
   extraccion: { label:'Extracción de Datos', icon:'fa-file-export' },
@@ -300,6 +303,36 @@ window.editarNombreUro2 = () => {
   uro2Nombre = nom;
   aplicarNombreUro2();
   setDoc(doc(db,'uiPrefs','uroexpertos2'), { nombre:nom, updatedAt: serverTimestamp() }).catch(()=>{});
+  if (typeof renderMenuGrupos==='function') renderMenuGrupos();
+  toast('Nombre actualizado.','success');
+};
+
+/* ── Nombre personalizable de CUADRO DE TURNOS 2 ── */
+let turnos2Nombre = 'Nueva Vista Turnos';
+async function cargarNombreTurnos2(){
+  try {
+    const snap = await getDoc(doc(db,'uiPrefs','turnos2'));
+    if (snap.exists() && snap.data()?.nombre) {
+      turnos2Nombre = snap.data().nombre;
+      aplicarNombreTurnos2();
+    }
+  } catch(e){}
+}
+function aplicarNombreTurnos2(){
+  const menu = document.getElementById('turnos2MenuLabel');
+  if (menu) menu.textContent = turnos2Nombre;
+  const tit = document.getElementById('turnos2Titulo');
+  if (tit) tit.textContent = turnos2Nombre;
+  if (MODULOS_CATALOGO.turnos2) MODULOS_CATALOGO.turnos2.label = turnos2Nombre;
+}
+window.editarNombreTurnos2 = () => {
+  const nombre = prompt('Nuevo nombre para esta vista:', turnos2Nombre);
+  if (nombre === null) return;
+  const nom = nombre.trim();
+  if (!nom) { toast('Nombre vacío.','error'); return; }
+  turnos2Nombre = nom;
+  aplicarNombreTurnos2();
+  setDoc(doc(db,'uiPrefs','turnos2'), { nombre:nom, updatedAt: serverTimestamp() }).catch(()=>{});
   if (typeof renderMenuGrupos==='function') renderMenuGrupos();
   toast('Nombre actualizado.','success');
 };
@@ -7464,6 +7497,683 @@ function chkKey(nombre) {
   return nombre.toLowerCase().normalize('NFD')
     .replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]/g,'_').slice(0,40);
 }
+/* ═══════════════════════════════════════════════════════════════
+   CUADRO DE TURNOS 2 — copia independiente de Cuadro de Turnos
+   Colección propia: turnos_v2 (empieza vacía)
+   Funciones ct_*, IDs *T2, estado ct_*.
+═══════════════════════════════════════════════════════════════ */
+let ct_turnos = [];
+let ct_turnosCurrentDate = new Date();
+let ct_editTurnoId = null;
+
+function ct_subscribeTurnos() {
+  onSnapshot(collection(db,'turnos_v2'), snap => {
+    ct_turnos = snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>a.fecha?.localeCompare(b.fecha));
+    if(document.getElementById('view-ct_turnos')?.classList.contains('active')){
+      ct_renderTurnos();
+      ct_renderTurnosTabla();
+    }
+  });
+}
+
+function ct_initTurnos() {
+  ct_turnosCurrentDate = new Date();
+  ct_renderTurnos();
+  ct_renderTurnosTabla();
+  ct_populateTurnosFilters();
+}
+
+function ct_populateTurnosFilters() {
+  // Especialistas
+  const selEsp = document.getElementById('tfEspT2');
+  if (selEsp) {
+    const esps = [...new Set(doctors.filter(d=>d.especialista).map(d=>d.especialista))].sort();
+    selEsp.innerHTML = '<option value="">Todos los especialistas</option>'
+      + esps.map(e=>`<option value="${escHtml(e)}">${escHtml(e)}</option>`).join('');
+  }
+  // Meses
+  const selMes = document.getElementById('tfMesT2');
+  if (selMes) {
+    selMes.innerHTML = '<option value="">Todos los meses</option>'
+      + MESES_TURN.map((m,i)=>`<option value="${i+1}">${m}</option>`).join('');
+  }
+}
+
+window.ct_turnosNav = (dir) => {
+  ct_turnosCurrentDate = new Date(ct_turnosCurrentDate.getFullYear(), ct_turnosCurrentDate.getMonth()+dir, 1);
+  ct_renderTurnos();
+};
+
+window.ct_turnosHoy = () => { ct_turnosCurrentDate = new Date(); ct_renderTurnos(); };
+
+window.ct_renderTurnos = () => { ct_renderCalMes(); };
+
+function ct_renderCalMes() {
+  const lbl = document.getElementById('turnosNavLabelT2');
+  const wrap = document.getElementById('turnosCalWrapT2');
+  if (!wrap) return;
+
+  const y = ct_turnosCurrentDate.getFullYear();
+  const m = ct_turnosCurrentDate.getMonth();
+  if (lbl) lbl.textContent = `${MESES_TURN[m]} ${y}`;
+
+  const firstDay = new Date(y,m,1).getDay();
+  const daysInMonth = new Date(y,m+1,0).getDate();
+  const today = new Date().toISOString().slice(0,10);
+
+  let html = `<div class="ct_turnos-cal-grid">`;
+  DIAS_SEMANA.forEach(d => { html += `<div class="ct_turnos-cal-dow">${d}</div>`; });
+
+  // Días del mes anterior
+  const prevDays = new Date(y,m,0).getDate();
+  for(let i=firstDay-1; i>=0; i--) {
+    html += `<div class="ct_turnos-cal-day other-month"><div class="ct_turnos-day-num">${prevDays-i}</div></div>`;
+  }
+
+  // Días del mes actual
+  for(let d=1; d<=daysInMonth; d++) {
+    const dateStr = `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const isToday = dateStr === today;
+    // Include ct_turnos whose range covers this day
+    // On the last day (HASTA), only show REGRESO — not the spanning IDA record
+    const covering = ct_turnos.filter(t=>{
+      const start = t.fecha||'';
+      const end   = t.fechaHasta||t.fecha||'';
+      return dateStr >= start && dateStr <= end;
+    });
+    // If there's a REGRESO record on this exact date, exclude IDA records that merely span through
+    const hasRegresoHere = covering.some(t => t.fecha === dateStr && t.trayecto === 'REGRESO');
+    const dayTurnos = hasRegresoHere
+      ? covering.filter(t => !(t.trayecto === 'IDA' && t.fecha !== dateStr))
+      : covering;
+
+    const events = dayTurnos.map(t=>{
+      const cls = t.trayecto==='IDA'?'ida':t.trayecto==='REGRESO'?'regreso':'default';
+      // Mostrar SOLO nombre del especialista
+      const nombre = (t.especialista||'—');
+      return `<div class="ct_turnos-cal-event ${cls}"
+        onclick="event.stopPropagation();ct_openTurnoModal('${t.id}')"
+        title="${escHtml(t.especialista||'')} · ${t.trayecto||''}">
+        <span class="cal-ev-name">${escHtml(nombre)}</span>
+      </div>`;
+    }).join('');
+
+    html += `<div class="ct_turnos-cal-day ${isToday?'today':''}" onclick="ct_openTurnoModal(null,'${dateStr}')">
+      <div class="ct_turnos-day-num">${d}</div>
+      ${events}
+    </div>`;
+  }
+
+  // Días del mes siguiente
+  const totalCells = firstDay + daysInMonth;
+  const remaining = (7 - (totalCells % 7)) % 7;
+  for(let d=1; d<=remaining; d++) {
+    html += `<div class="ct_turnos-cal-day other-month"><div class="ct_turnos-day-num">${d}</div></div>`;
+  }
+
+  html += '</div>';
+  wrap.innerHTML = html;
+}
+
+function ct_renderCalSemana() {
+  const wrap = document.getElementById('turnosCalWrapT2');
+  const lbl  = document.getElementById('turnosNavLabelT2');
+  if (!wrap) return;
+
+  // Inicio de semana (lunes)
+  const d0 = new Date(ct_turnosCurrentDate);
+  const dow = d0.getDay();
+  const diff = d0.getDate() - dow + (dow===0?-6:1);
+  d0.setDate(diff);
+  const weekStart = new Date(d0);
+  const weekEnd   = new Date(d0); weekEnd.setDate(weekEnd.getDate()+6);
+  if (lbl) lbl.textContent = `${weekStart.getDate()} ${MESES_TURN[weekStart.getMonth()]} — ${weekEnd.getDate()} ${MESES_TURN[weekEnd.getMonth()]} ${weekEnd.getFullYear()}`;
+
+  const days = [];
+  for(let i=0;i<7;i++){ const nd=new Date(weekStart); nd.setDate(nd.getDate()+i); days.push(nd); }
+  const today = new Date().toISOString().slice(0,10);
+  const DIAS_SHORT = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
+
+  // Leyenda
+  let html = `<div class="wsem-legend">
+    <span class="wsem-leg-item"><span class="wsem-dot" style="background:#fb923c"></span> Proceso pendiente</span>
+    <span class="wsem-leg-item"><span class="wsem-dot" style="background:#fbbf24"></span> En revisión</span>
+    <span class="wsem-leg-item"><span class="wsem-dot" style="background:#4ade80"></span> Listo</span>
+    <span class="wsem-leg-item"><span class="wsem-dot" style="background:#60a5fa"></span> Tarea</span>
+    <span class="wsem-leg-item"><span class="wsem-dot" style="background:#f87171"></span> Vencido</span>
+  </div>`;
+
+  // Grid de columnas
+  html += `<div class="wsem-grid">`;
+
+  days.forEach(d=>{
+    const ds = d.toISOString().slice(0,10);
+    const isT = ds === today;
+    const dayNum = d.getDate();
+    const dayName = DIAS_SHORT[d.getDay()].toUpperCase();
+    const dayTurnos = ct_turnos.filter(t=>t.fecha===ds);
+
+    const eventos = dayTurnos.map(t=>{
+      // Color según trayecto o tipo
+      const clr = t.trayecto==='REGRESO' ? '#bbf7d0' :
+                  t.tipo==='Residente'    ? '#dbeafe' : '#fee2e2';
+      const txtClr = t.trayecto==='REGRESO' ? '#166534' :
+                     t.tipo==='Residente'   ? '#1e40af' : '#991b1b';
+      const badgeClr = t.trayecto==='IDA'    ? '#f97316' :
+                       t.trayecto==='REGRESO' ? '#22c55e' : '#94a3b8';
+      const badgeTxt = t.trayecto || t.tipo || '';
+      return `<div class="wsem-event" style="background:${clr};border-left:3px solid ${badgeClr}"
+          onclick="event.stopPropagation();ct_openTurnoModal('${t.id}')"
+          title="${escHtml(t.especialista||'')} · ${t.sede||''} · ${t.trayecto||''}">
+        <div class="wsem-ev-name" style="color:${txtClr}">${escHtml(t.especialista||'—')}</div>
+        ${t.sede?`<div class="wsem-ev-sub">${escHtml(t.sede)}</div>`:''}
+        <span class="wsem-ev-badge" style="background:${badgeClr}">${badgeTxt}</span>
+      </div>`;
+    }).join('');
+
+    const sinEv = !dayTurnos.length ? `<div class="wsem-empty">Sin eventos</div>` : '';
+
+    html += `<div class="wsem-col ${isT?'wsem-today':''}">
+      <div class="wsem-col-head ${isT?'wsem-head-today':''}">
+        <div class="wsem-day-name">${dayName}</div>
+        <div class="wsem-day-num ${isT?'wsem-num-today':''}">${dayNum}</div>
+      </div>
+      <div class="wsem-col-body" onclick="ct_openTurnoModal(null,'${ds}')">
+        ${eventos}${sinEv}
+      </div>
+    </div>`;
+  });
+
+  html += `</div>`;
+  wrap.innerHTML = html;
+}
+
+window.ct_renderTurnosTabla = () => {
+  const container = document.getElementById('turnosCardsContainerT2');
+  const empty     = document.getElementById('turnosEmptyT2');
+  if(!container) return;
+
+  const fEsp   = document.getElementById('tfEspT2')?.value||'';
+  const fMes   = document.getElementById('tfMesT2')?.value||'';
+  const fHotel = document.getElementById('tfHotelT2')?.value||'';
+  const fTipo  = document.getElementById('tfTipoT2')?.value||'';
+  const fTray  = document.getElementById('tfTrayT2')?.value||'';
+
+  let list = ct_turnos.filter(t =>
+    (!fEsp   || t.especialista===fEsp) &&
+    (!fMes   || (t.fecha&&new Date(t.fecha+'T12:00').getMonth()+1===Number(fMes))) &&
+    (!fHotel || t.hotel===fHotel) &&
+    (!fTipo  || t.tipo===fTipo) &&
+    (!fTray  || t.trayecto===fTray)
+  ).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+
+  if(!list.length){ container.innerHTML=''; empty.style.display='flex'; return; }
+  empty.style.display='none';
+
+  const fmtV = v => v ? '$ '+Number(v).toLocaleString('es-CO') : '—';
+
+  container.innerHTML = `
+    <div style="overflow-x:auto">
+      <table class="ct_turnos-erp-table">
+        <thead>
+          <!-- Fila de grupos -->
+          <tr class="erp-grp-row">
+            <th colspan="6" class="erp-grp erp-grp-info">Información del Turno</th>
+            <th colspan="9" class="erp-grp erp-grp-tiq">Descuento al Especialista — Tiquetes y Hoteles</th>
+            <th colspan="3" class="erp-grp erp-grp-trans">Auditoría y Pago Transporte — Juan Aguirre</th>
+            <th colspan="1" class="erp-grp"></th>
+          </tr>
+          <!-- Fila de columnas -->
+          <tr class="erp-col-row">
+            <th>Fecha</th><th>Mes</th><th>Día</th>
+            <th>Especialista</th><th>Tipo</th><th>Sede</th>
+            <th class="col-tiq">Tiquetes</th>
+            <th class="col-tiq">Checklist</th>
+            <th class="col-tiq">Concepto</th>
+            <th class="col-tiq">Vr. Tiquete</th>
+            <th class="col-tiq">Hotel</th>
+            <th class="col-tiq">Checklist 2</th>
+            <th class="col-tiq">Vr. Hotel</th>
+            <th class="col-tiq">Residente</th>
+            <th class="col-tiq">Vr. Residente</th>
+            <th class="col-trans">Trayecto</th>
+            <th class="col-trans">Transporte</th>
+            <th class="col-trans">Vr. Transporte</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          ${list.map((t,i)=>{
+            const tray = t.trayecto||'';
+            const trayCls = tray==='IDA'?'tray-ida':tray==='REGRESO'?'tray-reg':'';
+            return `<tr class="erp-row ${i%2===0?'':'erp-row-alt'}">
+              <td class="erp-td-date">${t.fecha||'—'}</td>
+              <td>${t.mes||'—'}</td>
+              <td>${t.dia||'—'}</td>
+              <td class="erp-td-esp">${escHtml(t.especialista||'—')}</td>
+              <td><span class="erp-badge erp-tipo">${t.tipo||'—'}</span></td>
+              <td>${escHtml(t.sede||'—')}</td>
+              <td class="col-tiq">${escHtml(t.tiquetes||'—')}</td>
+              <td class="col-tiq erp-small">${escHtml(t.checklist1||'—')}</td>
+              <td class="col-tiq">${escHtml(t.concepto||'—')}</td>
+              <td class="col-tiq erp-money">${fmtV(t.valorTiquete)}</td>
+              <td class="col-tiq">${escHtml(t.hotel||'—')}</td>
+              <td class="col-tiq erp-small">${escHtml(t.checklist2||'—')}</td>
+              <td class="col-tiq erp-money">${fmtV(t.valorHotel)}</td>
+              <td class="col-tiq">${escHtml(t.residente||'—')}</td>
+              <td class="col-tiq erp-money">${fmtV(t.valorResidente)}</td>
+              <td class="col-trans"><span class="erp-tray ${trayCls}">${tray||'—'}</span></td>
+              <td class="col-trans erp-small">${escHtml(t.transporte||'—')}</td>
+              <td class="col-trans erp-money">${fmtV(t.valorTransporte)}</td>
+              <td>
+                <div class="tbl-actions">
+                  <button class="act-btn edit" onclick="ct_openTurnoModal('${t.id}')"><i class="fa-solid fa-pen"></i></button>
+                  <button class="act-btn del"  onclick="ct_deleteTurno('${t.id}')"><i class="fa-solid fa-trash"></i></button>
+                </div>
+              </td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>`;
+};
+
+function ct_buildEspPicker(selectedEsps=[]) {
+  window.ct__selectedEsps = [...selectedEsps];
+  const picker = document.getElementById('turnoEspPickerT2');
+  const tags   = document.getElementById('turnoEspTagsT2');
+  if (!picker) return;
+  const esps = [...new Set(doctors.filter(d=>d.especialista).map(d=>d.especialista))].sort();
+  picker.innerHTML = esps.map(e=>`
+    <label class="turno-esp-item ${selectedEsps.includes(e)?'selected':''}">
+      <input type="checkbox" value="${escHtml(e)}" ${selectedEsps.includes(e)?'checked':''}
+        onchange="ct_toggleEspPick('${escHtml(e)}',this.checked)"/>
+      <span>${escHtml(e)}</span>
+    </label>`).join('');
+  ct_renderEspTags();
+}
+
+window.ct_toggleEspPick = (esp, checked) => {
+  if (checked) { if (!window.ct__selectedEsps.includes(esp)) window.ct__selectedEsps.push(esp); }
+  else { window.ct__selectedEsps = window.ct__selectedEsps.filter(e=>e!==esp); }
+  document.querySelectorAll('#turnoEspPicker .turno-esp-item').forEach(el=>{
+    const cb = el.querySelector('input');
+    el.classList.toggle('selected', window.ct__selectedEsps.includes(cb.value));
+  });
+  ct_renderEspTags();
+};
+
+function ct_renderEspTags() {
+  const el = document.getElementById('turnoEspTagsT2');
+  if (!el) return;
+  el.innerHTML = window.ct__selectedEsps.map(e=>`
+    <span class="resp-tag">
+      ${escHtml(e.split(' ')[0])}
+      <span class="resp-tag-x" onclick="ct_toggleEspPick('${escHtml(e)}',false)">✕</span>
+    </span>`).join('');
+}
+
+window.ct_openTurnoModal = (id=null, dateStr=null) => {
+  ct_editTurnoId = id;
+  const t = id ? ct_turnos.find(x=>x.id===id) : null;
+  document.getElementById('turnoModalTitleT2').textContent = id?'Editar Turno':'Nuevo Turno';
+  document.getElementById('turnoIdT2').value = id||'';
+
+  const isEdit = !!id;
+  // Show multi or single depending on mode
+  document.getElementById('espMultiWrapT2').style.display  = isEdit ? 'none'  : '';
+  document.getElementById('espSingleWrapT2').style.display = isEdit ? ''      : 'none';
+
+  if (isEdit) {
+    // Single select for editing
+    const selEsp = document.getElementById('tEspecialistaT2');
+    const esps = [...new Set(doctors.filter(d=>d.especialista).map(d=>d.especialista))].sort();
+    selEsp.innerHTML = '<option value="">— Seleccionar —</option>'
+      + esps.map(e=>`<option value="${escHtml(e)}">${escHtml(e)}</option>`).join('');
+    selEsp.value = t?.especialista||'';
+  } else {
+    // Multi-picker for new
+    ct_buildEspPicker([]);
+  }
+
+  // DESDE / HASTA
+  const fecha = t?.fecha || dateStr || new Date().toISOString().slice(0,10);
+  document.getElementById('tDesdeT2').value = fecha;
+  document.getElementById('tHastaT2').value = t?.fechaHasta||'';
+  ct_onTurnoFechaChange(fecha);
+
+  // Resto de campos
+  document.getElementById('tTipoT2').value          = t?.tipo||'Especialista';
+  document.getElementById('tSedeT2').value          = t?.sede||'';
+  document.getElementById('tTiquetesT2').value      = t?.tiquetes||'';
+  document.getElementById('tChecklist1T2').value    = t?.checklist1||'';
+  document.getElementById('tConceptoT2').value      = t?.concepto||'';
+  document.getElementById('tValorTiqueteT2').value  = t?.valorTiquete||'';
+  document.getElementById('tHotelT2').value         = t?.hotel||'';
+  document.getElementById('tChecklist2T2').value    = t?.checklist2||'';
+  document.getElementById('tValorHotelT2').value    = t?.valorHotel||'';
+  document.getElementById('tResidenteT2').value     = t?.residente||'';
+  document.getElementById('tValorResidenteT2').value= t?.valorResidente||'';
+  document.getElementById('tTransporteT2').value    = t?.transporte||'JUAN AGUIRRE / UROEXPERTOS';
+  document.getElementById('tValorTransporteT2').value = t?.valorTransporte||'';
+  document.getElementById('tTrayectoT2').value      = t?.trayecto||'';
+
+  // Observación
+  document.getElementById('tObservacionT2').value = t?.observacion||'';
+
+  // Residente
+  const esRes = !!(t?.esResidente);
+  document.getElementById('tEsResidenteT2').checked = esRes;
+  document.getElementById('tResidenteClienteWrapT2').style.display = esRes ? 'block' : 'none';
+  if (esRes) {
+    const sel = document.getElementById('tResidenteClienteT2');
+    const opts = doctors.filter(d=>d.especialista).map(d =>
+      `<option value="${escHtml(d.id)}" ${t?.residenteClienteId===d.id?'selected':''}>${escHtml(d.especialista)}</option>`
+    ).join('');
+    sel.innerHTML = '<option value="">— Seleccionar cliente —</option>' + opts;
+    sel.value = t?.residenteClienteId||'';
+  }
+
+  document.getElementById('turnoModalT2').classList.add('open');
+};
+
+window.ct_closeTurnoModal = () => document.getElementById('turnoModalT2').classList.remove('open');
+
+window.ct_onTurnoResidenteChange = () => {
+  const checked = document.getElementById('tEsResidenteT2').checked;
+  const wrap    = document.getElementById('tResidenteClienteWrapT2');
+  const sel     = document.getElementById('tResidenteClienteT2');
+  if (!wrap) return;
+  wrap.style.display = checked ? 'block' : 'none';
+  if (checked && sel) {
+    // Populate with clients
+    const opts = doctors.filter(d=>d.especialista).map(d =>
+      `<option value="${escHtml(d.id)}">${escHtml(d.especialista)}</option>`
+    ).join('');
+    sel.innerHTML = '<option value="">— Seleccionar cliente —</option>' + opts;
+  }
+};
+
+function ct_onTurnoFechaChange(fStr) {
+  const desde = fStr || document.getElementById('tDesdeT2').value;
+  if (!desde) return;
+  const d = new Date(desde+'T12:00');
+  document.getElementById('tMesT2').value = MESES_TURN[d.getMonth()];
+  ct_renderTurnoRangeStrip();
+}
+
+window.ct_onTurnoHastaChange = () => ct_renderTurnoRangeStrip();
+
+function ct_renderTurnoRangeStrip() {
+  const strip = document.getElementById('turnoRangeStripT2');
+  if (!strip) return;
+  const desde = document.getElementById('tDesdeT2').value;
+  const hasta = document.getElementById('tHastaT2').value;
+  if (!desde) { strip.innerHTML = '<span style="color:var(--gray-3);font-size:12px">Selecciona Desde y Hasta para ver el rango</span>'; return; }
+
+  const DIAS_SHORT = ['D','L','M','M','J','V','S'];
+  const DIAS_NOM   = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
+  const start = new Date(desde+'T12:00');
+  const end   = hasta ? new Date(hasta+'T12:00') : start;
+
+  // Build list of days in range
+  const days = [];
+  let cur = new Date(start);
+  while (cur <= end && days.length < 35) {
+    days.push(new Date(cur));
+    cur.setDate(cur.getDate()+1);
+  }
+
+  strip.innerHTML = days.map((d,i) => {
+    const isFirst = i===0;
+    const isLast  = i===days.length-1 && days.length>1;
+    const cls = isFirst ? 'range-day-start' : isLast ? 'range-day-end' : 'range-day-mid';
+    const label = isFirst ? 'IDA' : isLast ? 'REG' : '';
+    return `<div class="range-day ${cls}" title="${d.toLocaleDateString('es-CO')}">
+      <div class="range-dow">${DIAS_SHORT[d.getDay()]}</div>
+      <div class="range-num">${d.getDate()}</div>
+      ${label?`<div class="range-tag">${label}</div>`:''}
+    </div>`;
+  }).join('');
+}
+
+window.ct_onTurnoEspChange = () => {
+  // no-op for now — trayecto set via DESDE/HASTA
+};
+
+window.ct_onTurnoHotelChange = () => {
+  const hotel = document.getElementById('tHotelT2').value;
+  if (hotel === 'BARBACOA') document.getElementById('tValorHotelT2').value = 82000;
+};
+
+function ct_calcTrayecto(especialista, fecha) {
+  if (!especialista || !fecha) return 'IDA';
+  // Obtener todos los ct_turnos del especialista ordenados por fecha
+  const myTurnos = ct_turnos
+    .filter(t => t.especialista===especialista && t.id !== ct_editTurnoId)
+    .map(t => t.fecha)
+    .sort();
+
+  if (!myTurnos.length) return 'IDA';
+
+  // Buscar el turno anterior más cercano
+  const prev = myTurnos.filter(f=>f<fecha).pop();
+  if (!prev) return 'IDA';
+
+  // Si el anterior fue IDA → este es REGRESO, y viceversa
+  const prevTurno = ct_turnos.find(t=>t.especialista===especialista && t.fecha===prev);
+  if (!prevTurno) return 'IDA';
+  return prevTurno.trayecto === 'IDA' ? 'REGRESO' : 'IDA';
+}
+
+window.ct_saveTurno = async () => {
+  const desde  = document.getElementById('tDesdeT2').value;
+  const hasta  = document.getElementById('tHastaT2').value;
+  if (!desde) { toast('La fecha Desde es obligatoria.','error'); return; }
+
+  // Build base data
+  const baseData = () => ({
+    tipo:   document.getElementById('tTipoT2').value,
+    sede:   document.getElementById('tSedeT2').value.trim(),
+    observacion:        document.getElementById('tObservacionT2')?.value.trim()||'',
+    esResidente:        document.getElementById('tEsResidenteT2')?.checked||false,
+    residenteClienteId: document.getElementById('tResidenteClienteT2')?.value||'',
+    tiquetes:       document.getElementById('tTiquetesT2').value.trim(),
+    checklist1:     document.getElementById('tChecklist1T2').value,
+    concepto:       document.getElementById('tConceptoT2').value.trim(),
+    valorTiquete:   Number(document.getElementById('tValorTiqueteT2').value)||0,
+    hotel:          document.getElementById('tHotelT2').value,
+    checklist2:     document.getElementById('tChecklist2T2').value,
+    valorHotel:     Number(document.getElementById('tValorHotelT2').value)||0,
+    residente:      document.getElementById('tResidenteT2').value.trim(),
+    valorResidente: Number(document.getElementById('tValorResidenteT2').value)||0,
+    transporte:     document.getElementById('tTransporteT2').value.trim(),
+    valorTransporte: document.getElementById('tValorTransporteT2').value
+                       ? Number(document.getElementById('tValorTransporteT2').value) : null,
+    updatedAt:      serverTimestamp(),
+  });
+
+  const fmtMesFromDate = d => { const dt=new Date(d+'T12:00'); return MESES_TURN[dt.getMonth()]; };
+  const fmtDiaFromDate = d => { const dt=new Date(d+'T12:00'); return DIAS_FULL[dt.getDay()]; };
+
+  try {
+    if (ct_editTurnoId) {
+      // Edit: single record
+      const esp = document.getElementById('tEspecialistaT2').value;
+      if (!esp) { toast('Selecciona un especialista.','error'); return; }
+      const data = {...baseData(), fecha:desde, fechaHasta:hasta, especialista:esp,
+        trayecto: document.getElementById('tTrayectoT2').value };
+      await updateDoc(doc(db,'turnos_v2',ct_editTurnoId), data);
+      toast('Turno actualizado.','success');
+    } else {
+      // New: multi-especialista × IDA + REGRESO
+      const esps = window.ct__selectedEsps||[];
+      if (!esps.length) { toast('Selecciona al menos un especialista.','error'); return; }
+      // Create IDA + REGRESO records per especialista
+      const records = [];
+      esps.forEach(esp => {
+        // IDA = DESDE
+        records.push({...baseData(), createdAt:serverTimestamp(),
+          fecha:desde, fechaHasta:hasta||desde, especialista:esp,
+          trayecto:'IDA', mes:fmtMesFromDate(desde), dia:fmtDiaFromDate(desde),
+        });
+        // REGRESO = HASTA (only if different date)
+        if (hasta && hasta !== desde) {
+          records.push({...baseData(), createdAt:serverTimestamp(),
+            fecha:hasta, fechaHasta:hasta, especialista:esp,
+            trayecto:'REGRESO', mes:fmtMesFromDate(hasta), dia:fmtDiaFromDate(hasta),
+          });
+        }
+      });
+      await Promise.all(records.map(r => addDoc(collection(db,'turnos_v2'),r)));
+      const n = records.length;
+      toast(`${n} registro${n>1?'s creados':' creado'}.`,'success');
+    }
+    ct_closeTurnoModal();
+  } catch(e) { toast('Error: '+e.message,'error'); }
+};
+
+window.ct_deleteTurno = async (id) => {
+  if (!confirm('¿Eliminar este turno?')) return;
+  try { await deleteDoc(doc(db,'turnos_v2',id)); toast('Turno eliminado.'); }
+  catch(e) { toast('Error: '+e.message,'error'); }
+};
+
+window.ct_openPrintTurnosModal = () => {
+  // Marcar mes actual por defecto
+  const now = new Date();
+  document.querySelectorAll('#printMonthsGrid input[type=checkbox]').forEach(cb=>{
+    cb.checked = parseInt(cb.value) === now.getMonth()+1;
+  });
+  const _pa=document.getElementById('printTurnosAnioT2'); if(_pa) _pa.value = String(now.getFullYear());
+  document.getElementById('printTurnosModalT2')?.classList.add('open');
+};
+
+window.ct_closePrintTurnosModal = () =>
+  document.getElementById('printTurnosModalT2')?.classList.remove('open');
+
+window.ct_imprimirTurnosMesActual = () => {
+  const d    = new Date(ct_turnosCurrentDate);
+  const anio = d.getFullYear();
+  const mes  = d.getMonth() + 1; // 1-12
+  const mesesNombres = ['','Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+  const diasSem = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
+  const fmtV  = v => v ? '$ '+Number(v).toLocaleString('es-CO') : '—';
+
+  const firstDay    = new Date(anio, mes-1, 1).getDay();
+  const daysInMonth = new Date(anio, mes, 0).getDate();
+  const today       = new Date().toISOString().slice(0,10);
+
+  // ── Construir HTML del calendario ──
+  let calHtml = `<div class="tp-head">${mesesNombres[mes].toUpperCase()} ${anio} — CUADRO DE TURNOS</div>
+  <div class="tp-grid">`;
+
+  diasSem.forEach(d => { calHtml += `<div class="tp-dow">${d}</div>`; });
+
+  for(let i=0;i<firstDay;i++) calHtml += `<div class="tp-day tp-other"></div>`;
+
+  for(let dd=1;dd<=daysInMonth;dd++){
+    const ds = `${anio}-${String(mes).padStart(2,'0')}-${String(dd).padStart(2,'0')}`;
+    // Range filter: show turno on every day it covers
+    const coveringT = ct_turnos.filter(t=>{
+      const s=t.fecha||'', e=t.fechaHasta||t.fecha||'';
+      return ds>=s && ds<=e;
+    }).sort((a,b)=>(a.especialista||'').localeCompare(b.especialista||''));
+    // On HASTA day: only show REGRESO, not the spanning IDA
+    const hasRegT = coveringT.some(t=>t.fecha===ds&&t.trayecto==='REGRESO');
+    const dayT = hasRegT
+      ? coveringT.filter(t=>!(t.trayecto==='IDA'&&t.fecha!==ds))
+      : coveringT;
+    const isToday = ds === today;
+    const evHtml = dayT.map(t=>{
+      const cls = t.trayecto==='REGRESO'?'tp-ev-reg':'tp-ev-ida';
+      const info = t.especialista || '';
+      return `<div class="tp-ev ${cls}">${escHtml(info)}</div>`;
+    }).join('');
+    calHtml += `<div class="tp-day${isToday?' tp-today':''}">
+      <div class="tp-num">${dd}</div>${evHtml}
+    </div>`;
+  }
+
+  const total = firstDay + daysInMonth;
+  const rem   = (7-(total%7))%7;
+  for(let i=0;i<rem;i++) calHtml += `<div class="tp-day tp-other"></div>`;
+  calHtml += `</div>`;
+
+  // ── Construir tabla de registros del mes ──
+  const mesT = ct_turnos.filter(t=>t.fecha&&
+    new Date(t.fecha+'T12:00').getFullYear()===anio&&
+    new Date(t.fecha+'T12:00').getMonth()===mes-1
+  ).sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+
+  let tablaHtml = '';
+  if(mesT.length){
+    tablaHtml = `<div class="tp-rec-title">REGISTROS DE TURNOS — ${mesesNombres[mes].toUpperCase()} ${anio}</div>
+    <table class="tp-table">
+      <thead>
+        <tr>
+          <th>Fecha</th><th>Especialista</th><th>Tipo</th><th>Sede</th>
+          <th>Hotel</th><th>Vr. Hotel</th><th>Vr. Tiquete</th>
+          <th>Trayecto</th><th>Transporte</th><th>Vr. Transporte</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${mesT.map((t,i)=>`<tr class="${i%2===0?'':'tp-alt'}">
+          <td>${t.fecha||'—'}</td>
+          <td style="font-weight:700">${escHtml(t.especialista||'—')}</td>
+          <td>${t.tipo||'—'}</td>
+          <td>${escHtml(t.sede||'—')}</td>
+          <td>${escHtml(t.hotel||'—')}</td>
+          <td class="tp-money">${fmtV(t.valorHotel)}</td>
+          <td class="tp-money">${fmtV(t.valorTiquete)}</td>
+          <td style="font-weight:700;color:${t.trayecto==='IDA'?'#1565c0':'#2e7d32'}">${t.trayecto||'—'}</td>
+          <td>${escHtml(t.transporte||'—')}</td>
+          <td class="tp-money">${fmtV(t.valorTransporte)}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+  }
+
+  // ── Insertar en zona imprimible del DOM ──
+  const zone = document.getElementById('turnosPrintZoneT2');
+  zone.innerHTML = calHtml;
+
+  if (!zone.innerHTML.trim()) {
+    toast('No se generó contenido para imprimir.', 'error');
+    return;
+  }
+
+  // ── Imprimir con clase de scope ──
+  document.body.classList.add('printing-ct_turnos');
+  setTimeout(() => {
+    window.print();
+  }, 300);
+  window.onafterprint = () => {
+    document.body.classList.remove('printing-ct_turnos');
+    zone.innerHTML = '';
+    window.onafterprint = null;
+  };
+  // Fallback limpieza
+  setTimeout(() => {
+    document.body.classList.remove('printing-ct_turnos');
+    zone.innerHTML = '';
+  }, 5000);
+};
+
+/* ── Suscripción Firestore CUADRO DE TURNOS 2 (colección turnos_v2, vacía) ── */
+let _ct_subscrito = false;
+function ct_subscribeTurnos() {
+  if (_ct_subscrito) return;
+  _ct_subscrito = true;
+  onSnapshot(collection(db,'turnos_v2'), snap => {
+    ct_turnos = snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>a.fecha?.localeCompare(b.fecha));
+    if(document.getElementById('view-turnos2')?.classList.contains('active')){
+      ct_renderTurnos(); ct_renderTurnosTabla();
+    }
+  });
+}
+
+
 
 /* ── Open / Close ── */
 window.openChecklist = async () => {

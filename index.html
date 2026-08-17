@@ -114,6 +114,7 @@
       <a class="nav-item" onclick="navigate('egresos',this)"><i class="fa-solid fa-file-invoice-dollar"></i><span>UROEXPERTOS</span></a>
       <a class="nav-item" onclick="navigate('uroexpertos2',this)"><i class="fa-solid fa-file-invoice-dollar"></i><span id="uro2MenuLabel">Nueva Vista</span></a>
       <a class="nav-item" onclick="navigate('turnos',this)"><i class="fa-solid fa-calendar-days"></i><span>Cuadro de Turnos</span></a>
+      <a class="nav-item" onclick="navigate('turnos2',this)"><i class="fa-solid fa-calendar-days"></i><span id="turnos2MenuLabel">Nueva Vista Turnos</span></a>
       <span class="nav-group-label">Análisis</span>
       <a class="nav-item" onclick="navigate('reportes',this)"><i class="fa-solid fa-chart-bar"></i><span>Reportes</span></a>
       <a class="nav-item" onclick="navigate('extraccion',this)"><i class="fa-solid fa-file-export"></i><span>Extracción de Datos</span></a>
@@ -609,6 +610,47 @@
         <!-- ZONA IMPRIMIBLE — visible solo en @media print -->
         <div id="turnosPrintZone"></div>
       </section>
+
+      <section class="view" id="view-turnos2">
+        <div class="view-title no-print">
+          <h1><span id="turnos2Titulo">Nueva Vista Turnos</span> <small>Control de desplazamientos y logística</small></h1>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <button class="btn btn-ghost" onclick="ct_turnosHoy()"><i class="fa-solid fa-calendar-day"></i> Hoy</button>
+            <button class="btn btn-ghost" onclick="ct_turnosNav(-1)"><i class="fa-solid fa-chevron-left"></i></button>
+            <span id="turnosNavLabelT2" style="display:flex;align-items:center;font-weight:700;color:var(--navy);min-width:180px;justify-content:center;font-size:15px"></span>
+            <button class="btn btn-ghost" onclick="ct_turnosNav(1)"><i class="fa-solid fa-chevron-right"></i></button>
+            <button class="btn btn-primary" onclick="ct_imprimirTurnosMesActual()"><i class="fa-solid fa-print"></i> Imprimir</button>
+            <button class="btn btn-ghost" onclick="editarNombreTurnos2()" title="Editar nombre de esta vista"><i class="fa-solid fa-pen"></i> Editar nombre</button>
+          </div>
+        </div>
+
+        <!-- Calendario mensual -->
+        <div class="turnos-cal-wrap no-print" id="turnosCalWrapT2"></div>
+
+        <!-- Tabla de registros + filtros -->
+        <div class="turnos-tabla-wrap no-print">
+          <div class="turnos-tabla-head">
+            <div class="turnos-tabla-title"><i class="fa-solid fa-table"></i> Registros de Turnos</div>
+            <!-- Filtros integrados en cabecera -->
+            <div class="turnos-filters-inline">
+              <select id="tfEspT2"   onchange="ct_renderTurnosTabla()"><option value="">Todos los especialistas</option></select>
+              <select id="tfMesT2"   onchange="ct_renderTurnosTabla()"><option value="">Todos los meses</option></select>
+              <select id="tfHotelT2" onchange="ct_renderTurnosTabla()"><option value="">Todo los hoteles</option><option>BARBACOA</option><option>IBIS</option><option>FLOR DE LOTO</option></select>
+              <select id="tfTipoT2"  onchange="ct_renderTurnosTabla()"><option value="">Todos los tipos</option><option>Especialista</option><option>Residente</option></select>
+              <select id="tfTrayT2"  onchange="ct_renderTurnosTabla()"><option value="">Todos los trayectos</option><option>IDA</option><option>REGRESO</option></select>
+            </div>
+          </div>
+          <div id="turnosCardsContainerT2" class="turnos-cards-grid"></div>
+          <div class="egr-empty" id="turnosEmptyT2" style="display:none">
+            <i class="fa-solid fa-calendar-days"></i>
+            <p>Sin registros. Haz clic en un día del calendario para agregar.</p>
+          </div>
+        </div>
+
+        <!-- ZONA IMPRIMIBLE — visible solo en @media print -->
+        <div id="turnosPrintZoneT2"></div>
+      </section>
+
 
       <!-- RESUMEN DE PROCESOS -->
       <section class="view" id="view-resumen">
@@ -2200,6 +2242,139 @@
       </div>
     </div>
     <div class="modal-body" id="liquidacionContentV2" style="padding:20px">
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══ MODALES CUADRO DE TURNOS 2 ═══ -->
+<div class="modal-overlay" id="turnoModalT2">
+  <div class="modal modal-xl">
+    <div class="modal-head">
+      <h3 id="turnoModalTitleT2">Nuevo Turno</h3>
+      <button class="modal-x" onclick="ct_closeTurnoModal()"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="turnoIdT2"/>
+      <div class="fg2">
+        <!-- DESDE / HASTA → generan IDA / REGRESO -->
+        <div class="fg">
+          <label>Desde <span style="font-size:10px;color:var(--blue);font-weight:400">(fecha IDA)</span></label>
+          <input type="date" id="tDesdeT2" onchange="ct_onTurnoFechaChange()"/>
+        </div>
+        <div class="fg">
+          <label>Hasta <span style="font-size:10px;color:var(--green-soft);font-weight:400">(fecha REGRESO)</span></label>
+          <input type="date" id="tHastaT2" onchange="ct_onTurnoHastaChange()"/>
+        </div>
+        <!-- Info auto -->
+        <div class="fg"><label>Mes</label><input type="text" id="tMesT2" readonly style="background:var(--gray-0)"/></div>
+        <!-- Visual day range indicator -->
+        <div class="fg full" style="margin-top:2px">
+          <label style="margin-bottom:4px">Días del rango</label>
+          <div class="turno-range-strip" id="turnoRangeStripT2">
+            <span style="color:var(--gray-3);font-size:12px">Selecciona Desde y Hasta para ver el rango</span>
+          </div>
+        </div>
+        <!-- Tipo y Sede -->
+        <div class="fg"><label>Tipo</label>
+          <select id="tTipoT2"><option value="Especialista">Especialista</option><option value="Residente">Residente</option></select>
+        </div>
+        <div class="fg"><label>Sede</label><input type="text" id="tSedeT2" placeholder="Clínica Norte…"/></div>
+        <!-- Multi-especialista (solo para nuevo turno) -->
+        <div class="fg full" id="espMultiWrapT2">
+          <label>Especialistas * <span style="font-size:10.5px;color:var(--gray-3);font-weight:400">— selecciona uno o varios</span></label>
+          <div class="turno-esp-picker" id="turnoEspPickerT2"></div>
+          <div class="turno-esp-tags" id="turnoEspTagsT2"></div>
+        </div>
+        <!-- Single select cuando se edita (un solo registro) -->
+        <div class="fg full" id="espSingleWrapT2" style="display:none">
+          <label>Especialista</label>
+          <select id="tEspecialistaT2" onchange="ct_onTurnoEspChange()">
+            <option value="">— Seleccionar —</option>
+          </select>
+        </div>
+        <!-- RESIDENTE checkbox + lista de clientes -->
+        <div class="fg full">
+          <label style="display:flex;align-items:center;gap:10px;cursor:pointer;margin-bottom:6px">
+            <input type="checkbox" id="tEsResidenteT2" style="width:16px;height:16px;accent-color:var(--blue);cursor:pointer"
+              onchange="ct_onTurnoResidenteChange()"/>
+            <span style="font-size:12px;font-weight:700;color:var(--navy)">RESIDENTE</span>
+            <span style="font-size:11px;color:var(--gray-3);font-weight:400">— marcar si aplica</span>
+          </label>
+          <div id="tResidenteClienteWrapT2" style="display:none">
+            <label style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:4px;display:block">Cliente / Residente</label>
+            <select id="tResidenteClienteT2" style="border:1.5px solid var(--gray-2);border-radius:var(--radius-sm);padding:8px 12px;font-size:13px;color:var(--navy);outline:none;font-family:'Nunito',sans-serif;background:white;width:100%;cursor:pointer">
+              <option value="">— Seleccionar cliente —</option>
+            </select>
+          </div>
+        </div>
+        <!-- OBSERVACIÓN — en la sección principal -->
+        <div class="fg full">
+          <label>Observación</label>
+          <textarea id="tObservacionT2" rows="2" placeholder="Notas internas del turno…"
+            style="border:1.5px solid var(--gray-2);border-radius:var(--radius-sm);padding:9px 12px;font-size:13px;color:var(--navy);outline:none;font-family:'Nunito',sans-serif;background:white;width:100%;resize:vertical;transition:border-color .2s"
+            onfocus="this.style.borderColor='var(--blue)'" onblur="this.style.borderColor='var(--gray-2)'"></textarea>
+        </div>
+        <div class="fg"><label>Trayecto <span style="font-size:10px;color:var(--gray-3);font-weight:400">(auto por fechas)</span></label>
+          <select id="tTrayectoT2">
+            <option value="">— Auto —</option>
+            <option value="IDA">IDA</option>
+            <option value="REGRESO">REGRESO</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- SECCIÓN: Descuento especialista -->
+      <div class="turnos-section-head"><i class="fa-solid fa-ticket"></i> Descuento al Especialista — Tiquetes y Hoteles</div>
+      <div class="fg2">
+        <div class="fg"><label>Tiquetes</label><input type="text" id="tTiquetesT2" placeholder="—"/></div>
+        <div class="fg"><label>Checklist</label>
+          <select id="tChecklist1T2">
+            <option value="">—</option>
+            <option>Ok, confirmado Clínica</option>
+            <option>No</option>
+            <option>Sí</option>
+            <option>Pendiente Solicitar</option>
+            <option>Pendiente Confirmar por Clínica</option>
+            <option>Recibido, Pendiente enviar a especialista</option>
+          </select>
+        </div>
+        <div class="fg"><label>Concepto</label><input type="text" id="tConceptoT2" placeholder="—"/></div>
+        <div class="fg"><label>Valor Tiquete</label><input type="number" id="tValorTiqueteT2" placeholder="0" min="0"/></div>
+        <div class="fg"><label>Hotel</label>
+          <select id="tHotelT2" onchange="ct_onTurnoHotelChange()">
+            <option value="">— Sin hotel —</option>
+            <option>BARBACOA</option>
+            <option>IBIS</option>
+            <option>FLOR DE LOTO</option>
+          </select>
+        </div>
+        <div class="fg"><label>Checklist 2</label>
+          <select id="tChecklist2T2">
+            <option value="">—</option>
+            <option>Ok, confirmado Clínica</option>
+            <option>No</option>
+            <option>Sí</option>
+            <option>Pendiente Solicitar</option>
+            <option>Pendiente Confirmar por Clínica</option>
+            <option>Recibido, Pendiente enviar a especialista</option>
+          </select>
+        </div>
+        <div class="fg"><label>Valor Hotel</label><input type="number" id="tValorHotelT2" placeholder="0" min="0"/></div>
+        <div class="fg"><label>Residente</label><input type="text" id="tResidenteT2" placeholder="—"/></div>
+        <div class="fg"><label>Valor Residente</label><input type="number" id="tValorResidenteT2" placeholder="0" min="0"/></div>
+      </div>
+
+      <!-- SECCIÓN: Auditoría transporte -->
+      <div class="turnos-section-head"><i class="fa-solid fa-car"></i> Auditoría y Pago Transporte — Juan Aguirre</div>
+      <div class="fg2">
+        <div class="fg"><label>Transporte</label><input type="text" id="tTransporteT2" value="JUAN AGUIRRE / UROEXPERTOS"/></div>
+        <div class="fg"><label>Valor Transporte</label><input type="number" id="tValorTransporteT2" value="46000" min="0"/></div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="ct_closeTurnoModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="ct_saveTurno()"><i class="fa-solid fa-floppy-disk"></i> Guardar</button>
     </div>
   </div>
 </div>
