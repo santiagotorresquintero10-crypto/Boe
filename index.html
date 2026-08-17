@@ -112,6 +112,7 @@
       <a class="nav-item" onclick="navigate('alertas',this)"><i class="fa-solid fa-bell"></i><span>Alertas</span><span class="nav-badge danger" id="navBadgeAlertas">0</span></a>
       <a class="nav-item" onclick="navigate('resumen',this)"><i class="fa-solid fa-chart-pie"></i><span>Resumen Procesos</span></a>
       <a class="nav-item" onclick="navigate('egresos',this)"><i class="fa-solid fa-file-invoice-dollar"></i><span>UROEXPERTOS</span></a>
+      <a class="nav-item" onclick="navigate('uroexpertos2',this)"><i class="fa-solid fa-file-invoice-dollar"></i><span id="uro2MenuLabel">UROEXPERTOS 2</span></a>
       <a class="nav-item" onclick="navigate('turnos',this)"><i class="fa-solid fa-calendar-days"></i><span>Cuadro de Turnos</span></a>
       <span class="nav-group-label">Análisis</span>
       <a class="nav-item" onclick="navigate('reportes',this)"><i class="fa-solid fa-chart-bar"></i><span>Reportes</span></a>
@@ -675,6 +676,61 @@
         <!-- TABLAS PERSONALIZADAS -->
         <div class="egr-custom-tables" id="egresoCustomTables"></div>
       </section>
+
+      <section class="view" id="view-uroexpertos2">
+        <div class="view-title">
+          <h1 style="display:flex;align-items:center;gap:12px">
+            <img id="uroLogoHeaderV2" alt="UROEXPERTOS" style="height:38px;width:auto;object-fit:contain"/>
+            <span><span id="uro2Titulo">UROEXPERTOS 2</span> <small>Gestión de honorarios y liquidaciones</small></span>
+          </h1>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-ghost" onclick="cl_openEgresoModal()"><i class="fa-solid fa-plus"></i> Nuevo Egreso</button>
+            <button class="btn btn-ghost" onclick="cl_openComprobanteModal()" style="border-color:var(--blue);color:var(--blue)"><i class="fa-solid fa-file-invoice-dollar"></i> Comprobante</button>
+            <button class="btn btn-primary" onclick="cl_openTablaModal()"><i class="fa-solid fa-table-columns"></i> Nueva Tabla</button>
+            <button class="btn btn-ghost" onclick="editarNombreUro2()" title="Editar nombre de esta vista"><i class="fa-solid fa-pen"></i> Editar nombre</button>
+          </div>
+        </div>
+
+        <!-- TABLA EGRESO (madre/hija) -->
+        <div class="egr-section">
+          <div class="egr-section-head">
+            <div>
+              <div class="egr-section-title"><i class="fa-solid fa-file-invoice"></i> Tabla Facturación Mensual</div>
+              <div class="egr-section-sub">Facturas madre con sus hijas asociadas</div>
+            </div>
+            <button class="btn btn-ghost btn-xs" onclick="cl_exportarFacturacionMensualExcel()"
+              style="color:#4ade80;border-color:rgba(74,222,128,.4);margin-left:auto;flex-shrink:0">
+              <i class="fa-solid fa-file-excel"></i> Exportar Excel
+            </button>
+          </div>
+          <div class="egr-table-wrap">
+            <table class="egr-table" id="egresoTableV2">
+              <thead>
+                <tr>
+                  <th style="width:32px"></th>
+                  <th>Honorario Mes</th>
+                  <th>Concepto</th>
+                  <th>Nombre</th>
+                  <th>Valor Entidad</th>
+                  <th>Administración</th>
+                  <th>Valor Especialista</th>
+                  <th>Factura</th>
+                  <th style="width:80px"></th>
+                </tr>
+              </thead>
+              <tbody id="egresoBodyV2"></tbody>
+            </table>
+            <div class="egr-empty" id="egresoEmptyV2">
+              <i class="fa-solid fa-file-invoice-dollar"></i>
+              <p>Sin egresos registrados. Crea el primero.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- TABLAS PERSONALIZADAS -->
+        <div class="egr-custom-tables" id="egresoCustomTablesV2"></div>
+      </section>
+
 
     </main>
   </div>
@@ -1714,5 +1770,440 @@
 </div>
 
 <script type="module" src="script.js"></script>
+
+<!-- ═══ MODALES UROEXPERTOS 2 ═══ -->
+<div class="modal-overlay" id="egresoModalV2">
+  <div class="modal modal-xl">
+    <div class="modal-head">
+      <h3 id="egresoModalTitleV2">Nuevo Egreso</h3>
+      <button class="modal-x" onclick="cl_closeEgresoModal()"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="egresoIdV2"/>
+      <div class="fg2">
+        <div class="fg"><label>Fecha Facturación</label><input type="date" id="eFechaFacturacionV2"/></div>
+        <div class="fg"><label>Honorario Mes *</label><input type="month" id="eHonorarioMesV2"/></div>
+        <div class="fg"><label>Concepto *</label><input type="text" id="eConceptoV2" placeholder="Facturación servicios médicos"/></div>
+        <div class="fg"><label>Nombre *</label><input type="text" id="eNombreV2" placeholder="Dr. Juan Pérez"/></div>
+        <div class="fg"><label>Factura *</label><input type="text" id="eFacturaV2" placeholder="FE-001"/></div>
+        <div class="fg"><label>Valor Entidad</label><input type="number" id="eValorEntidadV2" placeholder="0" min="0" oninput="cl_calcEgresoNeto()"/></div>
+        <div class="fg"><label>ICA <span style="font-size:10.5px;color:var(--gray-3);font-weight:400">(auto, editable)</span></label><input type="number" id="eIcaV2" placeholder="0" min="0" oninput="cl_calcEgresoNeto(true)"/></div>
+        <div class="fg"><label>Retención por Honorarios <span style="font-size:10.5px;color:var(--gray-3);font-weight:400">(auto, editable)</span></label><input type="number" id="eReteHonorariosV2" placeholder="0" min="0" oninput="cl_calcEgresoNeto(true)"/></div>
+        <div class="fg"><label>Nota Crédito <span style="font-size:10.5px;color:var(--gray-3);font-weight:400">(resta de Valor Entidad)</span></label><input type="number" id="eNotaCreditoV2" placeholder="0" min="0" oninput="cl_calcEgresoNeto()"/></div>
+        <div class="fg"><label>Valor Entidad Neto <span style="font-size:10.5px;color:var(--gray-3);font-weight:400">(calculado)</span></label><input type="number" id="eValorEntidadNetoV2" placeholder="0" readonly style="background:var(--blue-pale);font-weight:700;color:var(--navy)"/></div>
+        <div class="fg"><label>Administración</label><input type="number" id="eAdministracionV2" placeholder="0" min="0"/></div>
+        <div class="fg"><label>Valor Especialista</label><input type="number" id="eValorEspecialistaV2" placeholder="0" min="0"/></div>
+        <div class="fg"><label>Fecha de Pago <span style="font-size:10.5px;color:var(--gray-3);font-weight:400">(opcional)</span></label><input type="date" id="eFechaPagoV2"/></div>
+        <div class="fg full"><label>Notas</label><textarea id="eNotasV2" rows="2" placeholder="Observaciones…"></textarea></div>
+      </div>
+      <!-- Facturas hijas -->
+      <div class="egr-hijas-block">
+        <div class="egr-hijas-head">
+          <div class="egr-hijas-title"><i class="fa-solid fa-sitemap"></i> Facturas hijas asociadas</div>
+          <button class="btn btn-ghost btn-xs" onclick="cl_addHijaRow()"><i class="fa-solid fa-plus"></i> Añadir factura hija</button>
+        </div>
+        <div class="egr-hijas-scroll">
+          <table class="egr-hijas-table" id="hijasTableElV2">
+            <colgroup>
+              <col class="hc-fecha"/><col class="hc-mes"/><col class="hc-concepto"/><col class="hc-nombre"/>
+              <col class="hc-tipopersona"/><col class="hc-proveedor"/><col class="hc-factura"/><col class="hc-entidad"/><col class="hc-admin"/>
+              <col class="hc-esp"/><col class="hc-del"/>
+            </colgroup>
+            <thead>
+              <tr>
+                <th>Fecha Facturación</th>
+                <th>Honorario Mes</th>
+                <th>Concepto</th>
+                <th>Nombre</th>
+                <th>Tipo de Persona</th>
+                <th>Proveedor</th>
+                <th>Factura Hija</th>
+                <th>Valor Entidad</th>
+                <th>Administración</th>
+                <th>Valor Especialista</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="hijasBodyV2"></tbody>
+          </table>
+          <div class="egr-hijas-empty" id="hijasEmptyV2">Sin facturas hijas — pulsa "Añadir factura hija"</div>
+        </div>
+        <div class="egr-hijas-total">Total hijas (Valor Especialista): <strong id="hijasTotalV2">$ 0</strong></div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="cl_closeEgresoModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="cl_saveEgreso()"><i class="fa-solid fa-floppy-disk"></i> Guardar</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="tablaModalV2">
+  <div class="modal">
+    <div class="modal-head">
+      <h3 id="tablaModalTitleV2">Nueva Tabla Personalizada</h3>
+      <button class="modal-x" onclick="cl_closeTablaModal()"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="tablaEditIdV2"/>
+      <div class="fg"><label>Nombre de la tabla *</label><input type="text" id="tablaNameV2" placeholder="Ej: Clínica Llano Grande"/></div>
+      <!-- Logos -->
+      <div class="fg2" style="margin-top:12px">
+        <div class="fg">
+          <label>Logo izquierdo</label>
+          <div class="tabla-logo-picker">
+            <div class="tabla-logo-prev" id="tablaLogoIzqPrevV2">
+              <i class="fa-solid fa-image" style="color:var(--gray-2);font-size:18px"></i>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:5px">
+              <label class="btn btn-ghost btn-xs" style="cursor:pointer">
+                <i class="fa-solid fa-upload"></i> Subir
+                <input type="file" id="tablaLogoIzqFileV2" accept="image/*" style="display:none"
+                  onchange="cl_handleTablaLogo(event,'izq')"/>
+              </label>
+              <button class="btn btn-ghost btn-xs" onclick="cl_clearTablaLogo('izq')">
+                <i class="fa-solid fa-xmark"></i> Quitar
+              </button>
+            </div>
+          </div>
+          <input type="hidden" id="tablaLogoIzqV2"/>
+        </div>
+        <div class="fg">
+          <label>Logo derecho</label>
+          <div class="tabla-logo-picker">
+            <div class="tabla-logo-prev" id="tablaLogoDerPrevV2">
+              <i class="fa-solid fa-image" style="color:var(--gray-2);font-size:18px"></i>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:5px">
+              <label class="btn btn-ghost btn-xs" style="cursor:pointer">
+                <i class="fa-solid fa-upload"></i> Subir
+                <input type="file" id="tablaLogoDerFileV2" accept="image/*" style="display:none"
+                  onchange="cl_handleTablaLogo(event,'der')"/>
+              </label>
+              <button class="btn btn-ghost btn-xs" onclick="cl_clearTablaLogo('der')">
+                <i class="fa-solid fa-xmark"></i> Quitar
+              </button>
+            </div>
+          </div>
+          <input type="hidden" id="tablaLogoDerV2"/>
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="cl_closeTablaModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="cl_saveTabla()"><i class="fa-solid fa-floppy-disk"></i> Guardar</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="enviarModalV2">
+  <div class="modal" style="max-width:560px">
+    <div class="modal-head">
+      <h3><i class="fa-solid fa-paper-plane" style="color:#2e7d32;margin-right:8px"></i>Enviar por Correo</h3>
+      <button class="modal-x" onclick="closeEnviarModal()"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="modal-body">
+      <div style="background:var(--gray-0);border:1px solid var(--gray-1);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:13px">
+        <div style="display:flex;gap:8px;margin-bottom:4px"><strong style="min-width:90px;color:var(--navy)">Especialista:</strong><span id="envEspecialistaV2">—</span></div>
+        <div style="display:flex;gap:8px;margin-bottom:4px"><strong style="min-width:90px;color:var(--navy)">Destinatario:</strong><span id="envCorreoV2" style="color:var(--blue);font-weight:600">—</span></div>
+        <div style="display:flex;gap:8px"><strong style="min-width:90px;color:var(--navy)">Adjunto:</strong><span id="envAdjuntoV2" style="color:#2e7d32">—</span></div>
+      </div>
+      <div class="fg" style="margin-bottom:12px">
+        <label>Fecha del archivo adjunto <span style="font-size:10px;color:var(--gray-3);font-weight:400">(nombre del PDF, emisión y mensaje)</span></label>
+        <input type="date" id="envFechaArchivoV2" onchange="cl_envActualizarNombreAdjunto()"/>
+      </div>
+      <div class="fg" style="margin-bottom:12px">
+        <label>¿Es un abono?</label>
+        <select id="envEsAbonoV2" onchange="cl_envActualizarMensaje()" style="border:1.5px solid var(--gray-1);border-radius:8px;padding:9px 11px;font-size:13px;outline:none;font-family:'Nunito',sans-serif;background:white;color:var(--navy);font-weight:600;cursor:pointer;width:100%">
+          <option value="no">No — pago total de honorarios</option>
+          <option value="si">Sí — es un abono</option>
+        </select>
+      </div>
+      <div class="fg" style="margin-bottom:12px">
+        <label>Asunto</label>
+        <input type="text" id="envAsuntoV2" value="Información de facturación UroExpertos"/>
+      </div>
+      <div class="fg">
+        <label>Mensaje</label>
+        <textarea id="envMensajeV2" rows="4">Buen día, adjuntamos la información correspondiente para su revisión.</textarea>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeEnviarModal()">Cancelar</button>
+      <button class="btn btn-primary" id="btnEnviarCorreoV2" onclick="cl_enviarCorreoFila()" style="background:linear-gradient(135deg,#2e7d32,#1b5e20)">
+        <i class="fa-solid fa-paper-plane"></i> Enviar correo
+      </button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="tablaRowModalV2">
+  <div class="modal modal-xl">
+    <div class="modal-head">
+      <h3 id="tablaRowTitleV2">Nueva Fila</h3>
+      <button class="modal-x" onclick="cl_closeTablaRowModal()"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="tablaRowIdV2"/>
+      <input type="hidden" id="tablaRowTablaIdV2"/>
+      <div class="fg2">
+        <div class="fg"><label>Factura</label>
+          <div style="display:flex;gap:6px">
+            <input type="text" id="trFacturaV2" placeholder="FE-001" oninput="cl_autocompletarDesdeEgreso()"/>
+            <button class="btn btn-ghost btn-xs" onclick="cl_autocompletarDesdeEgreso()" title="Buscar en Egreso" style="flex-shrink:0">
+              <i class="fa-solid fa-magnifying-glass"></i>
+            </button>
+          </div>
+        </div>
+        <div class="fg"><label>Mes</label><input type="month" id="trMesV2"/></div>
+        <div class="fg"><label>Nombre Especialista</label>
+          <select id="trNombreV2" style="border:1.5px solid var(--gray-1);border-radius:7px;padding:6px 10px;font-size:12.5px;outline:none;font-family:'Nunito',sans-serif;cursor:pointer;background:white;color:var(--navy);width:100%">
+            <option value="">— Seleccionar especialista —</option>
+          </select>
+        </div>
+        <div class="fg"><label>Tipo de Persona</label>
+          <select id="trTipoPersonaV2" style="border:1.5px solid var(--gray-1);border-radius:7px;padding:6px 10px;font-size:12.5px;outline:none;font-family:'Nunito',sans-serif;cursor:pointer;background:white;color:var(--navy);width:100%">
+            <option value="">— Tipo —</option>
+            <option value="Persona Natural">Persona Natural</option>
+            <option value="SAS">SAS</option>
+          </select>
+        </div>
+        <div class="fg"><label>Valor Factura</label><input type="number" id="trValorFacturaV2" placeholder="0" oninput="cl_calcValorPagar()"/></div>
+        <div class="fg"><label>Abono</label><input type="number" id="trAbonoV2" placeholder="0" oninput="cl_calcValorPagar()"/></div>
+        <div class="fg"><label>Glosa</label><input type="number" id="trGlosaV2" placeholder="0" oninput="cl_calcValorPagar()"/></div>
+        <div class="fg"><label>Rete Fuente</label><input type="number" id="trReteFuenteV2" placeholder="0" oninput="cl_calcValorPagar()"/></div>
+        <div class="fg"><label>AFC</label><input type="number" id="trAfcV2" placeholder="0" oninput="cl_calcValorPagar()"/></div>
+        <div class="fg"><label>Residentes</label><input type="number" id="trResidentesV2" placeholder="0" oninput="cl_calcValorPagar()"/></div>
+        <div class="fg"><label>Tiquetes</label><input type="number" id="trTiquetesV2" placeholder="0" oninput="cl_calcValorPagar()"/></div>
+        <div class="fg"><label>Hotel</label><input type="number" id="trHotelV2" placeholder="0" oninput="cl_calcValorPagar()"/></div>
+        <div class="fg"><label>Transporte</label><input type="number" id="trTransporteV2" placeholder="0" oninput="cl_calcValorPagar()"/></div>
+        <div class="fg"><label>Valor a Pagar</label>
+          <input type="number" id="trValorPagarV2" placeholder="0" readonly
+            style="background:var(--blue-pale);font-weight:800;color:var(--navy);border-color:var(--blue)"/>
+        </div>
+      </div>
+      <!-- Autocompletado info -->
+      <div class="egr-autocomplete-info" id="egresoAutoInfoV2" style="display:none">
+        <i class="fa-solid fa-circle-check"></i>
+        <span id="egresoAutoMsgV2"></span>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="cl_closeTablaRowModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="cl_saveTablaRow()"><i class="fa-solid fa-floppy-disk"></i> Guardar</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="comprobanteModalV2">
+  <div class="modal comp-modal-wrap">
+    <!-- Toolbar (no-print) -->
+    <div class="comp-toolbar no-print">
+      <div class="comp-toolbar-left">
+        <h3 style="font-size:14px;font-weight:800;color:var(--navy)"><i class="fa-solid fa-file-invoice-dollar" style="color:var(--blue);margin-right:7px"></i>Comprobante de Egreso</h3>
+      </div>
+      <div class="comp-toolbar-right">
+        <button class="btn btn-primary" onclick="cl_imprimirComprobante()"><i class="fa-solid fa-print"></i> Imprimir / PDF</button>
+        <button class="btn btn-ghost" onclick="cl_closeComprobanteModal()"><i class="fa-solid fa-xmark"></i> Cerrar</button>
+      </div>
+    </div>
+
+    <!-- Selectores (no-print) -->
+    <div class="comp-selectors no-print">
+      <div class="comp-sel-group">
+        <label>Especialista</label>
+        <select id="compEspecialistaV2" onchange="cl_onCompEspecialistaChange()">
+          <option value="">— Seleccionar —</option>
+        </select>
+      </div>
+      <div class="comp-sel-group">
+        <label>IPS / Tabla</label>
+        <select id="compIPSV2" onchange="cl_onCompIPSChange()">
+          <option value="">— Seleccionar —</option>
+        </select>
+      </div>
+      <div class="comp-sel-group">
+        <label>Mes del Servicio</label>
+        <select id="compMesV2" onchange="cl_onCompMesChange()">
+          <option value="">— Seleccionar —</option>
+        </select>
+      </div>
+      <div class="comp-sel-group">
+        <label>Logo</label>
+        <label class="btn btn-ghost btn-xs" style="cursor:pointer;display:inline-flex;align-items:center;gap:5px">
+          <i class="fa-solid fa-image"></i> Logo
+          <input type="file" id="compLogoFileV2" accept="image/*" style="display:none" onchange="cl_handleCompLogo(event)"/>
+        </label>
+      </div>
+    </div>
+
+    <!-- DOCUMENTO IMPRIMIBLE -->
+    <div class="comp-doc" id="compDocV2">
+
+      <!-- ENCABEZADO -->
+      <div class="comp-header">
+        <div class="comp-logo-area">
+          <img id="compLogoImgV2" src="" alt="Logo" style="display:none;max-height:60px;max-width:160px;object-fit:contain"/>
+          <div id="compLogoPlaceholderV2" class="comp-logo-placeholder"><i class="fa-solid fa-briefcase-medical"></i></div>
+        </div>
+        <div class="comp-header-right">
+          <div class="comp-title-block">COMPROBANTE DE EGRESO</div>
+          <div class="comp-consecutivo-row">
+            <span class="comp-consec-label">Consecutivo:</span>
+            <input class="comp-consec-input" id="compConsecutivoV2" type="text" value=""/>
+          </div>
+          <div class="comp-fecha-row">
+            <span class="comp-consec-label">Fecha de Emisión:</span>
+            <input class="comp-fecha-input" id="compFechaV2" type="date" onchange="cl_onCompFechaChange()"/>
+          </div>
+        </div>
+      </div>
+
+      <!-- SECCIÓN BENEFICIARIO -->
+      <div class="comp-section-head">INFORMACIÓN DEL BENEFICIARIO</div>
+      <div class="comp-section-body comp-ben-grid">
+        <div class="comp-field-row">
+          <span class="comp-label">Nombre:</span>
+          <input class="comp-input" id="compNombreV2" type="text" placeholder="—"/>
+        </div>
+        <div class="comp-field-row">
+          <span class="comp-label">Documento:</span>
+          <input class="comp-input" id="compDocumentoV2" type="text" placeholder="—"/>
+        </div>
+        <div class="comp-field-row">
+          <span class="comp-label">Proveedor:</span>
+          <input class="comp-input" id="compProveedorV2" type="text" placeholder="—"/>
+        </div>
+        <div class="comp-field-row">
+          <span class="comp-label comp-label-bold">Correo Electrónico:</span>
+          <input class="comp-input" id="compCorreoV2" type="text" placeholder="—"/>
+        </div>
+      </div>
+
+      <!-- SECCIÓN SERVICIO -->
+      <div class="comp-section-head">INFORMACIÓN DEL SERVICIO</div>
+      <div class="comp-section-body comp-serv-grid">
+        <div class="comp-field-row">
+          <span class="comp-label">IPS:</span>
+          <input class="comp-input comp-input-wide" id="compIPSValV2" type="text" placeholder="—"/>
+        </div>
+        <div class="comp-field-row">
+          <span class="comp-label">Mes del Servicio:</span>
+          <input class="comp-input comp-input-mid" id="compMesValV2" type="text" placeholder="—"/>
+        </div>
+      </div>
+
+      <!-- SECCIÓN DETALLE FINANCIERO -->
+      <div class="comp-section-head">DETALLE FINANCIERO</div>
+      <div class="comp-section-body" style="padding:0">
+        <table class="comp-fin-table">
+          <tbody>
+            <tr class="comp-fin-doc-row">
+              <td class="comp-fin-label" style="width:45%">N. FACTURA</td>
+              <td class="comp-fin-label" style="width:10%;text-align:center">DOCUMENTO SOPORTE</td>
+              <td><input class="comp-input" id="compFacturaV2" type="text" placeholder="—"/></td>
+            </tr>
+            <tr>
+              <td class="comp-fin-label">VALOR FACTURA:</td>
+              <td></td>
+              <td><input class="comp-input comp-money" id="compValorFacturaV2" type="number" placeholder="0" oninput="cl_calcCompNeto()"/></td>
+            </tr>
+            <tr>
+              <td class="comp-fin-label">(-)ABONO</td>
+              <td></td>
+              <td><input class="comp-input comp-money" id="compAbonoV2" type="number" placeholder="0" oninput="cl_calcCompNeto()"/></td>
+            </tr>
+            <tr>
+              <td class="comp-fin-label">(-)RETE FUENTE</td>
+              <td></td>
+              <td><input class="comp-input comp-money" id="compReteFuenteV2" type="number" placeholder="0" oninput="cl_calcCompNeto()"/></td>
+            </tr>
+            <tr>
+              <td class="comp-fin-label">(-)GLOSA</td>
+              <td></td>
+              <td><input class="comp-input comp-money" id="compGlosaV2" type="number" placeholder="0" oninput="cl_calcCompNeto()"/></td>
+            </tr>
+            <tr>
+              <td class="comp-fin-label">(-)AFC</td>
+              <td></td>
+              <td><input class="comp-input comp-money" id="compAfcV2" type="number" placeholder="0" oninput="cl_calcCompNeto()"/></td>
+            </tr>
+            <tr>
+              <td class="comp-fin-label">(-)RESIDENTES</td>
+              <td></td>
+              <td><input class="comp-input comp-money" id="compResidentesV2" type="number" placeholder="0" oninput="cl_calcCompNeto()"/></td>
+            </tr>
+            <tr>
+              <td class="comp-fin-label">(-)TIQUETES</td>
+              <td></td>
+              <td><input class="comp-input comp-money" id="compTiquetesV2" type="number" placeholder="0" oninput="cl_calcCompNeto()"/></td>
+            </tr>
+            <tr>
+              <td class="comp-fin-label">(-)HOTEL</td>
+              <td></td>
+              <td><input class="comp-input comp-money" id="compHotelV2" type="number" placeholder="0" oninput="cl_calcCompNeto()"/></td>
+            </tr>
+            <tr>
+              <td class="comp-fin-label">(-)TRANSPORTE</td>
+              <td></td>
+              <td><input class="comp-input comp-money" id="compTransporteV2" type="number" placeholder="0" oninput="cl_calcCompNeto()"/></td>
+            </tr>
+            <tr class="comp-fin-total-row">
+              <td class="comp-fin-total-lbl">VALOR NETO A PAGAR</td>
+              <td><span style="font-size:18px;font-weight:900">$</span></td>
+              <td id="compNetoDisplayV2" class="comp-fin-total-val">0</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- SECCIÓN PAGO -->
+      <div class="comp-section-head comp-section-head-sm">INFORMACIÓN DEL PAGO</div>
+      <div class="comp-section-body" style="padding:0">
+        <table class="comp-pago-table">
+          <tbody>
+            <tr><td class="comp-pago-lbl">MEDIO DE PAGO</td><td><input class="comp-input" id="compMedioPagoV2" type="text" value="TRANSFERENCIA BANCARIA"/></td></tr>
+            <tr><td class="comp-pago-lbl">BANCO</td><td><input class="comp-input" id="compBancoV2" type="text" placeholder="—"/></td></tr>
+            <tr><td class="comp-pago-lbl">N. CUENTA</td><td><input class="comp-input" id="compNCuentaV2" type="text" placeholder="—"/></td></tr>
+            <tr><td class="comp-pago-lbl">TIPO CUENTA</td><td><input class="comp-input" id="compTipoCuentaV2" type="text" placeholder="—"/></td></tr>
+            <tr><td class="comp-pago-lbl">TITULAR</td><td><input class="comp-input" id="compTitularV2" type="text" placeholder="—"/></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Firma -->
+      <div class="comp-firma-row">
+        <div class="comp-firma-box">
+          <input class="comp-firma-input" id="compFirma1V2" type="text" value="Angela Paredes"/>
+          <div class="comp-firma-label">APROBADO POR</div>
+        </div>
+        <div class="comp-firma-box">
+          <input class="comp-firma-input" id="compFirma2V2" type="text" value="Rosa Castellanos"/>
+          <div class="comp-firma-label">REVISADO POR</div>
+        </div>
+        <div class="comp-firma-box">
+          <input class="comp-firma-input" id="compFirma3V2" type="text" value="Angela Paredes"/>
+          <div class="comp-firma-label">AUTORIZÓ PAGO</div>
+        </div>
+      </div>
+
+    </div><!-- /comp-doc -->
+  </div>
+</div>
+
+<div class="modal-overlay" id="liquidacionModalV2">
+  <div class="modal modal-xl">
+    <div class="modal-head no-print">
+      <h3>Vista de Liquidación</h3>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-primary" onclick="window.print()"><i class="fa-solid fa-print"></i> Imprimir / PDF</button>
+        <button class="modal-x" onclick="cl_closeLiquidacionModal()"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+    </div>
+    <div class="modal-body" id="liquidacionContentV2" style="padding:20px">
+    </div>
+  </div>
+</div>
+
 </body>
 </html>

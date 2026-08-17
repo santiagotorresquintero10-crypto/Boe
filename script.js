@@ -191,6 +191,7 @@ function subscribeAll(){
       if (s.exists()) { const c=s.data()?.colapsados||{}; Object.keys(c).forEach(k=>clienteGrupoColapsado[k]=true); filterDoctors(); }
     }).catch(()=>{});
     cargarMenuGrupos();
+    cargarNombreUro2();
   }
   onSnapshot(query(collection(db,'doctors'),orderBy('createdAt','desc')),snap=>{
     doctors=snap.docs.map(d=>({id:d.id,...d.data()}));
@@ -234,7 +235,7 @@ window.navigate = (view,el) => {
   document.getElementById('view-'+view)?.classList.add('active');
   const sideItem=document.querySelector(`.nav-item[onclick*="'${view}'"]`);
   if(sideItem) sideItem.classList.add('active');
-  const labels={dashboard:'Dashboard',doctores:'Clientes',kanban:'Tablero Kanban',tareas:'Tareas',chat:'Chat del equipo',equipo:'Equipo',alertas:'Alertas',calendario:'Calendario',reportes:'Reportes',resumen:'Resumen de Procesos',egresos:'UROEXPERTOS',turnos:'Cuadro de Turnos',extraccion:'Extracción de Datos'};
+  const labels={dashboard:'Dashboard',doctores:'Clientes',kanban:'Tablero Kanban',tareas:'Tareas',chat:'Chat del equipo',equipo:'Equipo',alertas:'Alertas',calendario:'Calendario',reportes:'Reportes',resumen:'Resumen de Procesos',egresos:'UROEXPERTOS',turnos:'Cuadro de Turnos',extraccion:'Extracción de Datos',uroexpertos2:'UROEXPERTOS 2'};
   document.getElementById('breadcrumb').textContent=labels[view]||view;
   if(window.innerWidth<=768){ document.getElementById('sidebar').classList.remove('mobile-open'); document.getElementById('sidebarOverlay').classList.remove('open'); }
   if(view==='tareas') applyTareaFilters();
@@ -243,6 +244,7 @@ window.navigate = (view,el) => {
   if(view==='calendario') renderCalendario();
   if(view==='resumen') renderResumen();
   if(view==='egresos') initEgresos();
+  if(view==='uroexpertos2') { cl_subscribeEgresos(); cl_initEgresos(); }
   if(view==='turnos') initTurnos();
   if(view==='extraccion') extCargarListaPlantillas();
   if(view==='reportes') reenviarDatosReportes();
@@ -266,9 +268,40 @@ const MODULOS_CATALOGO = {
   alertas:    { label:'Alertas',             icon:'fa-bell' },
   resumen:    { label:'Resumen Procesos',    icon:'fa-chart-pie' },
   egresos:    { label:'UROEXPERTOS',         icon:'fa-file-invoice-dollar' },
+  uroexpertos2: { label:'UROEXPERTOS 2',     icon:'fa-file-invoice-dollar' },
   turnos:     { label:'Cuadro de Turnos',    icon:'fa-calendar-days' },
   reportes:   { label:'Reportes',            icon:'fa-chart-bar' },
   extraccion: { label:'Extracción de Datos', icon:'fa-file-export' },
+};
+
+/* ── Nombre personalizable de UROEXPERTOS 2 ── */
+let uro2Nombre = 'UROEXPERTOS 2';
+async function cargarNombreUro2(){
+  try {
+    const snap = await getDoc(doc(db,'uiPrefs','uroexpertos2'));
+    if (snap.exists() && snap.data()?.nombre) {
+      uro2Nombre = snap.data().nombre;
+      aplicarNombreUro2();
+    }
+  } catch(e){}
+}
+function aplicarNombreUro2(){
+  const menu = document.getElementById('uro2MenuLabel');
+  if (menu) menu.textContent = uro2Nombre;
+  const tit = document.getElementById('uro2Titulo');
+  if (tit) tit.textContent = uro2Nombre;
+  if (MODULOS_CATALOGO.uroexpertos2) MODULOS_CATALOGO.uroexpertos2.label = uro2Nombre;
+}
+window.editarNombreUro2 = () => {
+  const nombre = prompt('Nuevo nombre para esta vista:', uro2Nombre);
+  if (nombre === null) return;
+  const nom = nombre.trim();
+  if (!nom) { toast('Nombre vacío.','error'); return; }
+  uro2Nombre = nom;
+  aplicarNombreUro2();
+  setDoc(doc(db,'uiPrefs','uroexpertos2'), { nombre:nom, updatedAt: serverTimestamp() }).catch(()=>{});
+  if (typeof renderMenuGrupos==='function') renderMenuGrupos();
+  toast('Nombre actualizado.','success');
 };
 
 let menuGrupos = [];          // [{ id, nombre, modulos:[claves], colapsado }]
@@ -4962,6 +4995,1638 @@ const DIAS_SEMANA = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
 const DIAS_FULL   = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
 const MESES_TURN  = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
 
+/* ═══════════════════════════════════════════════════════════════
+   UROEXPERTOS 2 — copia independiente de UROEXPERTOS
+   Colecciones propias: egresos_v2, tablasEgreso_v2 (empiezan vacías)
+   Funciones cl_*, IDs *V2, estado cl_*. Helpers de formato compartidos.
+═══════════════════════════════════════════════════════════════ */
+let cl_egresos = [];
+let cl_tablasEgreso = [];
+let cl_localHijas = [];
+let cl_editEgresoId = null;
+let cl_editTablaRowTablaId = null;
+let cl_editTablaRowIdx = null;
+let cl__guardandoFila = false;
+let cl__envContext = null;
+const cl_busquedaTablas = {};
+const cl_grupoColapsado = {};
+
+function cl_initEgresos() {
+  // Cargar logo UROEXPERTOS en el encabezado
+  const logoImg = document.getElementById('uroLogoHeader2');
+  if (logoImg && typeof UROEXPERTOS_LOGO_B64 !== 'undefined') logoImg.src = UROEXPERTOS_LOGO_B64;
+  // El estado de carpetas se carga en subscribeEgresos (al login).
+  // Salvaguarda: si aún no se cargó, hacerlo ahora y re-renderizar.
+  // UROEXPERTOS 2 usa su propio estado de carpetas (cl_grupoColapsado)
+  cl_renderEgresoTable();
+  cl_renderCustomTables();
+}
+
+function cl_renderEgresoTable() {
+  const tbody = document.getElementById('egresoBodyV2');
+  const empty = document.getElementById('egresoEmptyV2');
+  if (!tbody) return;
+  if (!cl_egresos.length) {
+    tbody.innerHTML=''; empty.style.display='flex'; return;
+  }
+  empty.style.display='none';
+
+  // Construye el HTML de una factura madre + sus hijas
+  const madreHtml = (e, claveGrupo) => {
+    const hijas = e.hijas||[];
+    const totalHijas = hijas.reduce((s,h)=>s+(Number(h.valorEspecialista)||0),0);
+    let h = '';
+
+    // ── FILA MADRE ──
+    h += `<tr class="egr-madre" data-mgroup-row="${escHtml(claveGrupo)}" onclick="cl_toggleHijas('${e.id}')">
+      <td class="egr-expand-cell">
+        <i class="fa-solid fa-chevron-right egr-expand-icon" id="icon-${e.id}"></i>
+      </td>
+      <td>${e.honorarioMes||'—'}</td>
+      <td>${escHtml(e.concepto||'—')}</td>
+      <td><strong>${escHtml(e.nombre||'—')}</strong></td>
+      <td>${fmtCOP(e.valorEntidad)}</td>
+      <td>${fmtCOP(e.administracion)}</td>
+      <td class="egr-val-esp">${fmtCOP(e.valorEspecialista)}</td>
+      <td><span class="egr-factura-badge">${escHtml(e.factura||'—')}</span></td>
+      <td>
+        <div class="tbl-actions">
+          ${e.fechaPago
+            ? `<span class="pago-badge pagada" title="Pagada el ${fmtFechaLegible(e.fechaPago)}"><i class="fa-solid fa-circle-check"></i></span>`
+            : `<span class="pago-badge pendiente" title="Pendiente de pago"><i class="fa-solid fa-clock"></i></span>`}
+          <button class="act-btn edit" onclick="event.stopPropagation();cl_openEgresoModal('${e.id}')"><i class="fa-solid fa-pen"></i></button>
+          <button class="act-btn del"  onclick="event.stopPropagation();cl_deleteEgreso('${e.id}')"><i class="fa-solid fa-trash"></i></button>
+        </div>
+      </td>
+    </tr>`;
+
+    // ── FILAS HIJAS ──
+    hijas.forEach((hj) => {
+      h += `<tr class="egr-hija-row" data-parent="${e.id}" data-mgroup-row="${escHtml(claveGrupo)}" style="display:none">
+        <td class="egr-expand-cell egr-hija-indent">
+          <i class="fa-solid fa-corner-down-right egr-hija-icon"></i>
+        </td>
+        <td>${hj.honorarioMes||'—'}</td>
+        <td>${escHtml(hj.concepto||'—')}</td>
+        <td>${escHtml(hj.nombre||'—')}</td>
+        <td>${fmtCOP(hj.valorEntidad)}</td>
+        <td>${fmtCOP(hj.administracion)}</td>
+        <td class="egr-val-esp">${fmtCOP(hj.valorEspecialista)}</td>
+        <td><span class="egr-factura-badge egr-hija-badge">${escHtml(hj.factura||'—')}</span></td>
+        <td></td>
+      </tr>`;
+    });
+
+    // ── FILA TOTAL HIJAS ──
+    if (hijas.length) {
+      h += `<tr class="egr-total-row" data-parent="${e.id}" data-mgroup-row="${escHtml(claveGrupo)}" style="display:none">
+        <td colspan="6" class="egr-total-lbl">Total hijas (${hijas.length}):</td>
+        <td class="egr-total-val">${fmtCOP(totalHijas)}</td>
+        <td colspan="2"></td>
+      </tr>`;
+    }
+    return h;
+  };
+
+  // ── Agrupar facturas madre por mes (campo honorarioMes tipo "2026-03") ──
+  const grupos = cl_agruparPorMesMadre(cl_egresos);
+  let html = '';
+  grupos.forEach(g => {
+    const colapsado = cl_grupoColapsado[`madre|${g.clave}`] ? 'colapsado' : '';
+    const totalGrupo = g.items.reduce((s,e)=>s+(Number(e.valorEspecialista)||0),0);
+    html += `<tr class="tbl-group-row egr-group-row ${colapsado}" data-group="${escHtml(g.clave)}" onclick="cl_toggleGrupoMadre('${escHtml(g.clave)}',this)">
+      <td colspan="7" class="tbl-group-cell">
+        <i class="fa-solid fa-chevron-down tbl-group-chevron"></i>
+        <i class="fa-solid fa-folder-open tbl-group-folder"></i>
+        <span class="tbl-group-label">${escHtml(g.etiqueta)}</span>
+        <span class="tbl-group-count">${g.items.length} factura${g.items.length!==1?'s':''}</span>
+      </td>
+      <td class="tbl-group-total">${fmtCOP(totalGrupo)}</td>
+      <td></td>
+    </tr>`;
+    g.items.forEach(e => { html += madreHtml(e, g.clave); });
+  });
+
+  tbody.innerHTML = html;
+
+  // Aplicar estado colapsado inicial de los grupos
+  grupos.forEach(g => {
+    if (cl_grupoColapsado[`madre|${g.clave}`]) {
+      tbody.querySelectorAll(`tr[data-mgroup-row="${cssEscapa(g.clave)}"]`).forEach(tr=>tr.style.display='none');
+    }
+  });
+}
+
+function cl_agruparPorMesMadre(items){
+  const map = new Map();
+  items.forEach(e => {
+    const clave = (e.honorarioMes||'').trim() || 'sin-mes';
+    if (!map.has(clave)) map.set(clave, []);
+    map.get(clave).push(e);
+  });
+  const claves = [...map.keys()].sort((a,b)=>{
+    if (a === 'sin-mes') return 1;
+    if (b === 'sin-mes') return -1;
+    return b.localeCompare(a);
+  });
+  return claves.map(clave => ({ clave, etiqueta: etiquetaMes(clave), items: map.get(clave) }));
+}
+
+window.cl_toggleGrupoMadre = (clave, filaCab) => {
+  const key = `madre|${clave}`;
+  const colapsar = !cl_grupoColapsado[key];
+  cl_grupoColapsado[key] = colapsar;
+  persistirGrupoColapsado();
+  filaCab.classList.toggle('colapsado', colapsar);
+  const tbody = document.getElementById('egresoBodyV2');
+  if (!tbody) return;
+  tbody.querySelectorAll(`tr[data-mgroup-row="${cssEscapa(clave)}"]`).forEach(tr=>{
+    if (colapsar) {
+      tr.style.display = 'none';
+    } else {
+      // Al expandir el grupo: mostrar madres; hijas quedan ocultas hasta abrir cada madre
+      if (tr.classList.contains('egr-madre')) tr.style.display = '';
+      else tr.style.display = 'none';
+      // reset del ícono de expansión de cada madre
+      if (tr.classList.contains('egr-madre')) {
+        const ic = tr.querySelector('.egr-expand-icon');
+        ic?.classList.remove('open');
+      }
+    }
+  });
+}
+
+window.cl_toggleHijas = (id) => {
+  const icon = document.getElementById('icon-'+id);
+  const rows = document.querySelectorAll(`[data-parent="${id}"]`);
+  const open = [...rows].some(r => r.style.display !== 'none');
+  rows.forEach(r => r.style.display = open ? 'none' : 'table-row');
+  icon?.classList.toggle('open', !open);
+};
+
+window.cl_openEgresoModal = (id=null) => {
+  cl_editEgresoId = id;
+  const e = id ? cl_egresos.find(x=>x.id===id) : null;
+  document.getElementById('egresoModalTitleV2').textContent = id?'Editar Egreso':'Nuevo Egreso';
+  document.getElementById('egresoIdV2').value = id||'';
+  document.getElementById('eFechaFacturacionV2').value = e?.fechaFacturacion||'';
+  document.getElementById('eHonorarioMesV2').value = e?.honorarioMes||'';
+  document.getElementById('eConceptoV2').value = e?.concepto||'';
+  document.getElementById('eNombreV2').value = e?.nombre||'';
+  document.getElementById('eFacturaV2').value = e?.factura||'';
+  document.getElementById('eValorEntidadV2').value = e?.valorEntidad||'';
+  document.getElementById('eNotaCreditoV2').value = e?.notaCredito||'';
+  document.getElementById('eAdministracionV2').value = e?.administracion||'';
+  document.getElementById('eValorEspecialistaV2').value = e?.valorEspecialista||'';
+  document.getElementById('eFechaPagoV2').value = e?.fechaPago||'';
+  document.getElementById('eNotasV2').value = e?.notas||'';
+  // Editar: respetar ICA/Rete guardados (pueden ser manuales). Nuevo: auto-calcular.
+  if (e) {
+    document.getElementById('eIcaV2').value = (e.ica ?? '') === '' ? '' : e.ica;
+    document.getElementById('eReteHonorariosV2').value = (e.reteHonorarios ?? '') === '' ? '' : e.reteHonorarios;
+    cl_calcEgresoNeto(true);   // recalcula solo el neto, sin tocar ICA/Rete
+  } else {
+    cl_calcEgresoNeto();       // egreso nuevo: ICA y Rete automáticos
+  }
+  cl_localHijas = e?.hijas ? JSON.parse(JSON.stringify(e.hijas)) : [];
+  cl_renderHijasTable();
+  document.getElementById('egresoModalV2').classList.add('open');
+};
+
+window.cl_calcEgresoNeto = (edicionManual) => {
+  const entidad = Number(document.getElementById('eValorEntidadV2')?.value)||0;
+  const nota    = Number(document.getElementById('eNotaCreditoV2')?.value)||0;
+  const elIca = document.getElementById('eIcaV2');
+  const elRet = document.getElementById('eReteHonorariosV2');
+
+  // Si NO es edición manual de ICA/Rete, recalcular desde Valor Entidad:
+  //   ICA = REDONDEAR(Valor Entidad × 10 / 1000)   (10 x mil)
+  //   Retención por Honorarios = Valor Entidad × 11%
+  if (!edicionManual) {
+    if (elIca) elIca.value = Math.round(entidad * 10 / 1000);
+    if (elRet) elRet.value = Math.round(entidad * 0.11);
+  }
+
+  const ica     = Number(elIca?.value)||0;
+  const reteHon = Number(elRet?.value)||0;
+
+  // Valor Entidad Neto = Valor Entidad − Nota Crédito − ICA − Retención
+  const neto = entidad - nota - ica - reteHon;
+  const el = document.getElementById('eValorEntidadNetoV2');
+  if(el) el.value = neto;
+};
+
+window.cl_closeEgresoModal = () => {
+  document.getElementById('egresoModalV2').classList.remove('open');
+  cl_editEgresoId = null; cl_localHijas = [];
+};
+
+window.cl_addHijaRow = () => {
+  cl_localHijas.push({factura:'', concepto:'', valor:0});
+  cl_renderHijasTable();
+};
+
+window.cl_removeHijaRow = (i) => {
+  cl_localHijas.splice(i,1);
+  cl_renderHijasTable();
+};
+
+function cl_renderHijasTable() {
+  const tbody  = document.getElementById('hijasBodyV2');
+  const emptyEl= document.getElementById('hijasEmptyV2');
+  const tableEl= document.getElementById('hijasTableElV2');
+  if (!tbody) return;
+  if (!cl_localHijas.length) {
+    tbody.innerHTML='';
+    if(emptyEl) emptyEl.style.display='block';
+    if(tableEl) tableEl.querySelector('thead').style.display='none';
+    cl_updateHijasTotal(); return;
+  }
+  if(emptyEl) emptyEl.style.display='none';
+  if(tableEl) tableEl.querySelector('thead').style.display='';
+
+  tbody.innerHTML = cl_localHijas.map((h,i)=>`
+    <tr>
+      <td><input type="date"   class="hija-fecha"    value="${h.fechaFacturacion||''}"/></td>
+      <td><input type="month"  class="hija-mes"       value="${h.honorarioMes||''}"/></td>
+      <td><input type="text"   class="hija-concepto" value="${escHtml(h.concepto||'')}"  placeholder="Descripción del servicio…"/></td>
+      <td>
+        <select class="hija-nombre" style="width:100%;border:1.5px solid var(--gray-1);border-radius:8px;padding:8px 10px;font-size:13px;outline:none;font-family:'Nunito',sans-serif;background:white;color:var(--navy);font-weight:600;cursor:pointer;transition:border-color .2s"
+          onchange="cl_autoProveedorFromNombre(this,${i})">
+          <option value="">— Seleccionar especialista —</option>
+          ${doctors.filter(d=>d.especialista).map(d=>`<option value="${escHtml(d.especialista)}" ${h.nombre===d.especialista?'selected':''}>${escHtml(d.especialista)}</option>`).join('')}
+          ${h.nombre && !doctors.some(d=>d.especialista===h.nombre)?`<option value="${escHtml(h.nombre)}" selected>${escHtml(h.nombre)}</option>`:''}
+        </select>
+      </td>
+      <td>
+        <select class="hija-tipopersona" style="width:100%;border:1.5px solid var(--gray-1);border-radius:8px;padding:8px 10px;font-size:13px;outline:none;font-family:'Nunito',sans-serif;background:white;color:var(--navy);font-weight:600;cursor:pointer">
+          <option value="">— Tipo —</option>
+          <option value="Persona Natural" ${h.tipoPersona==='Persona Natural'?'selected':''}>Persona Natural</option>
+          <option value="SAS" ${h.tipoPersona==='SAS'?'selected':''}>SAS</option>
+        </select>
+      </td>
+      <td><input type="text" class="hija-proveedor" value="${escHtml(h.proveedor||'')}" placeholder="Nombre empresa…" style="border:1.5px solid var(--gray-1);border-radius:8px;padding:8px 10px;font-size:13px;outline:none;font-family:'Nunito',sans-serif;background:#f8faff;color:var(--navy);font-weight:600;width:100%;transition:border-color .2s" readonly/></td>
+      <td><input type="text"   class="hija-factura"  value="${escHtml(h.factura||'')}"  placeholder="FE-001-H"/></td>
+      <td><input type="number" class="hija-entidad"  value="${h.valorEntidad||''}"       placeholder="0" min="0"/></td>
+      <td><input type="number" class="hija-admin"    value="${h.administracion||''}"     placeholder="0" min="0"/></td>
+      <td><input type="number" class="hija-valor"    value="${h.valorEspecialista||''}"  placeholder="0" min="0"
+        oninput="cl_updateHijasTotal()"/></td>
+      <td><button class="accesos-del-btn" onclick="cl_removeHijaRow(${i})"><i class="fa-solid fa-trash"></i></button></td>
+    </tr>`).join('');
+  cl_updateHijasTotal();
+}
+
+window.cl_autoProveedorFromNombre = (selectEl, rowIdx) => {
+  const esp = selectEl.value;
+  const row = selectEl.closest('tr');
+  const provInput = row?.querySelector('.hija-proveedor');
+  if (!provInput) return;
+  const cliente = doctors.find(d => d.especialista === esp);
+  provInput.value = cliente?.nombre || '';
+};
+
+function cl_updateHijasTotal() {
+  const total = [...document.querySelectorAll('.hija-valor')]
+    .reduce((s,el)=>s+(Number(el.value)||0),0);
+  const el = document.getElementById('hijasTotalV2');
+  if (el) el.textContent = fmtCOP(total);
+}
+
+window.cl_saveEgreso = async () => {
+  const factura = document.getElementById('eFacturaV2').value.trim();
+  const nombre  = document.getElementById('eNombreV2').value.trim();
+  if (!nombre||!factura) { toast('Nombre y Factura son obligatorios.','error'); return; }
+
+  // Leer hijas del DOM — todos los campos iguales a la madre
+  const hijas = [];
+  document.querySelectorAll('#hijasBody tr').forEach(row=>{
+    const honorarioMes     = row.querySelector('.hija-mes')?.value||'';
+    const concepto         = row.querySelector('.hija-concepto')?.value.trim()||'';
+    const nombre           = row.querySelector('.hija-nombre')?.value||'';
+    const tipoPersona      = row.querySelector('.hija-tipopersona')?.value||'';
+    const proveedor        = row.querySelector('.hija-proveedor')?.value.trim()||'';
+    const factura          = row.querySelector('.hija-factura')?.value.trim()||'';
+    const fechaFacturacion = row.querySelector('.hija-fecha')?.value||'';
+    const valorEntidad     = Number(row.querySelector('.hija-entidad')?.value)||0;
+    const administracion   = Number(row.querySelector('.hija-admin')?.value)||0;
+    const valorEspecialista= Number(row.querySelector('.hija-valor')?.value)||0;
+    if (factura||nombre||concepto) hijas.push({fechaFacturacion,honorarioMes,concepto,nombre,tipoPersona,proveedor,factura,valorEntidad,administracion,valorEspecialista});
+  });
+
+  const data = {
+    fechaFacturacion: document.getElementById('eFechaFacturacionV2').value,
+    honorarioMes: document.getElementById('eHonorarioMesV2').value,
+    concepto:     document.getElementById('eConceptoV2').value.trim(),
+    nombre,
+    factura,
+    valorEntidad:      Number(document.getElementById('eValorEntidadV2').value)||0,
+    ica:               Number(document.getElementById('eIcaV2').value)||0,
+    reteHonorarios:    Number(document.getElementById('eReteHonorariosV2').value)||0,
+    notaCredito:       Number(document.getElementById('eNotaCreditoV2').value)||0,
+    valorEntidadNeto:  Number(document.getElementById('eValorEntidadNetoV2').value)||0,
+    administracion:    Number(document.getElementById('eAdministracionV2').value)||0,
+    valorEspecialista: Number(document.getElementById('eValorEspecialistaV2').value)||0,
+    fechaPago:         document.getElementById('eFechaPagoV2').value||'',
+    notas:        document.getElementById('eNotasV2').value.trim(),
+    hijas,
+    updatedAt: serverTimestamp()
+  };
+  try {
+    if (cl_editEgresoId) {
+      await updateDoc(doc(db,'egresos_v2',cl_editEgresoId),data);
+      toast('Registro actualizado.','success');
+    } else {
+      data.createdAt = serverTimestamp();
+      await addDoc(collection(db,'egresos_v2'),data);
+      toast('Registro creado.','success');
+    }
+    cl_closeEgresoModal();
+  } catch(e) { toast('Error: '+e.message,'error'); }
+};
+
+window.cl_deleteEgreso = async (id) => {
+  if (!confirm('¿Eliminar este egreso?')) return;
+  try { await deleteDoc(doc(db,'egresos_v2',id)); toast('Eliminado.'); }
+  catch(e) { toast('Error: '+e.message,'error'); }
+};
+
+window.cl_openTablaModal = (id=null) => {
+  const t = id ? cl_tablasEgreso.find(x=>x.id===id) : null;
+  document.getElementById('tablaModalTitleV2').textContent = id ? 'Editar Tabla' : 'Nueva Tabla';
+  document.getElementById('tablaEditIdV2').value  = id||'';
+  document.getElementById('tablaNameV2').value    = t?.nombre||'';
+  // Logos
+  cl__setTablaLogoPreview('izq', t?.logoIzq||'');
+  cl__setTablaLogoPreview('der', t?.logoDer||'');
+  document.getElementById('tablaLogoIzqV2').value = t?.logoIzq||'';
+  document.getElementById('tablaLogoDerV2').value = t?.logoDer||'';
+  document.getElementById('tablaModalV2').classList.add('open');
+};
+
+window.cl_closeTablaModal = () => {
+  document.getElementById('tablaModalV2').classList.remove('open');
+  document.getElementById('tablaEditIdV2').value = '';
+};
+
+window.cl_editTabla = (id) => cl_openTablaModal(id);
+
+function cl__setTablaLogoPreview(side, b64) {
+  const prev = document.getElementById(`tablaLogo${side==='izq'?'Izq':'Der'}PrevV2`);
+  if (!prev) return;
+  if (b64) {
+    prev.innerHTML = `<img src="${b64}" style="max-height:46px;max-width:80px;object-fit:contain"/>`;
+  } else {
+    prev.innerHTML = '<i class="fa-solid fa-image" style="color:var(--gray-2);font-size:18px"></i>';
+  }
+}
+
+window.cl_handleTablaLogo = (e, side) => {
+  const file = e.target.files[0]; if (!file) return;
+  const r = new FileReader();
+  r.onload = ev => {
+    const b64 = ev.target.result;
+    document.getElementById(side==='izq'?'tablaLogoIzqV2':'tablaLogoDerV2').value = b64;
+    cl__setTablaLogoPreview(side, b64);
+  };
+  r.readAsDataURL(file);
+};
+
+window.cl_clearTablaLogo = (side) => {
+  document.getElementById(side==='izq'?'tablaLogoIzqV2':'tablaLogoDerV2').value = '';
+  cl__setTablaLogoPreview(side, '');
+  document.getElementById(side==='izq'?'tablaLogoIzqFile':'tablaLogoDerFile').value = '';
+};
+
+window.cl_saveTabla = async () => {
+  const nombre  = document.getElementById('tablaNameV2').value.trim();
+  if (!nombre) { toast('Ponle un nombre a la tabla.','error'); return; }
+  const editId  = document.getElementById('tablaEditIdV2').value;
+  const logoIzq = document.getElementById('tablaLogoIzqV2').value||'';
+  const logoDer = document.getElementById('tablaLogoDerV2').value||'';
+  try {
+    if (editId) {
+      await updateDoc(doc(db,'tablasEgreso_v2',editId),{nombre,logoIzq,logoDer,updatedAt:serverTimestamp()});
+      toast('Tabla actualizada.','success');
+    } else {
+      await addDoc(collection(db,'tablasEgreso_v2'),{nombre,logoIzq,logoDer,filas:[],createdAt:serverTimestamp()});
+      toast('Tabla creada.','success');
+    }
+    cl_closeTablaModal();
+  } catch(e){ toast('Error: '+e.message,'error'); }
+};
+
+window.cl_toggleTablaCheck = (tablaId, field, val) => {
+  const idx = cl_tablasEgreso.findIndex(t=>t.id===tablaId);
+  if(idx===-1) return;
+  if(field==='contabilidad') cl_tablasEgreso[idx]._chkContabilidad = val;
+  if(field==='facturacion')  cl_tablasEgreso[idx]._chkFacturacion  = val;
+  // persist to Firestore
+  const upd = {};
+  upd[field==='contabilidad'?'chkContabilidad':'chkFacturacion'] = val;
+  updateDoc(doc(db,'tablasEgreso_v2',tablaId), upd).catch(()=>{});
+};
+
+window.cl_onIdentChange = async (tablaId, selectEl) => {
+  const idx = cl_tablasEgreso.findIndex(t=>t.id===tablaId);
+  if (idx===-1) return;
+  const selectedIds = [...selectEl.selectedOptions].map(o=>o.value).filter(Boolean);
+  cl_tablasEgreso[idx]._selectedIdents = selectedIds;
+  cl_tablasEgreso[idx]._selectedIdent  = selectedIds[0]||'';
+  cl_renderCustomTables();
+
+  // ── Autocarga de facturas hijas desde los cl_egresos seleccionados ──
+  if (!selectedIds.length) return;
+  const tabla = cl_tablasEgreso[idx];
+  const filasActuales = tabla.filas||[];
+
+  // Factura numbers already existing for each identId
+  const existentes = new Set(
+    filasActuales
+      .filter(f => selectedIds.includes(f.identId))
+      .map(f => (f.factura||'').trim().toLowerCase())
+  );
+
+  // Build new filas from hijas of each selected egreso
+  const nuevas = [];
+  selectedIds.forEach(egresoId => {
+    const egreso = cl_egresos.find(e=>e.id===egresoId);
+    if (!egreso) return;
+    (egreso.hijas||[]).forEach(h => {
+      const factKey = (h.factura||'').trim().toLowerCase();
+      if (!factKey || existentes.has(factKey)) return; // skip duplicates
+      existentes.add(factKey); // prevent duplicates within this batch
+
+      const valorFactura = Number(h.valorEspecialista)||0;
+      // Use same formula as cl_calcValorPagar: base = valorFactura (no abono)
+      const valorPagar = valorFactura;
+
+      nuevas.push({
+        rowId:        genRowId(),
+        identId:      egresoId,
+        identIds:     [egresoId],
+        factura:      h.factura||'',
+        mes:          h.honorarioMes||egreso.honorarioMes||'',
+        nombre:       h.nombre||egreso.nombre||'',
+        tipoPersona:  h.tipoPersona||'',
+        valorFactura,
+        abono:        0,
+        glosa:        0,
+        reteFuente:   0,
+        afc:          0,
+        residentes:   0,
+        tiquetes:     0,
+        hotel:        0,
+        transporte:   0,
+        valorPagar,
+      });
+    });
+  });
+
+  if (!nuevas.length) return;
+
+  try {
+    const filasActualizadas = [...filasActuales, ...nuevas];
+    await updateDoc(doc(db,'tablasEgreso_v2',tablaId), {
+      filas: filasActualizadas,
+      updatedAt: serverTimestamp()
+    });
+    toast(`${nuevas.length} fila${nuevas.length>1?'s':''} creada${nuevas.length>1?'s':''} automáticamente.`, 'success');
+  } catch(e) {
+    toast('Error al autocargar filas: '+e.message, 'error');
+  }
+};
+
+window.cl_deleteTabla = async (id) => {
+  if (!confirm('¿Eliminar esta tabla y todas sus filas?')) return;
+  try { await deleteDoc(doc(db,'tablasEgreso_v2',id)); toast('Tabla eliminada.'); }
+  catch(e) { toast('Error: '+e.message,'error'); }
+};
+
+window.cl_filtrarTablaBusqueda = (tablaId, texto) => {
+  cl_busquedaTablas[tablaId] = texto || '';
+  const q    = normBusq(texto);
+  const card = document.getElementById('tcard-'+tablaId);
+  if (!card) return;
+
+  const filas = card.querySelectorAll('.egr-custom-table tbody tr[data-search]');
+  let visibles = 0, total = 0;
+
+  // ¿Cuántos grupos hay y cuántos están abiertos? Si TODOS abiertos → buscar en todo.
+  const grupos = [...card.querySelectorAll('.tbl-group-row')];
+  const totalGrupos = grupos.length;
+  const gruposAbiertos = grupos.filter(gr => {
+    const clave = gr.getAttribute('data-group');
+    return !cl_grupoColapsado[`${tablaId}|${clave}`];
+  }).length;
+  // Si hay grupos y no todos están abiertos, la búsqueda se limita a los abiertos
+  const limitarAAbiertos = totalGrupos > 0 && gruposAbiertos < totalGrupos;
+
+  filas.forEach(tr => {
+    const clave = tr.getAttribute('data-group-row');
+    const grupoCerrado = clave && cl_grupoColapsado[`${tablaId}|${clave}`];
+    // Con búsqueda: si limitamos a abiertos, las filas de grupos cerrados NO participan
+    const participa = !(limitarAAbiertos && grupoCerrado);
+    const match = participa && (!q || (tr.getAttribute('data-search')||'').includes(q));
+    // Sin búsqueda: respetar el colapso normal
+    const mostrar = q ? match : !grupoCerrado;
+    tr.style.display = mostrar ? '' : 'none';
+    if (q && match){ visibles++; total += Number(tr.getAttribute('data-pagar'))||0; }
+    if (!q){ total += (!grupoCerrado ? (Number(tr.getAttribute('data-pagar'))||0) : 0); }
+  });
+
+  // Encabezados de grupo
+  card.querySelectorAll('.tbl-group-row').forEach(gr => {
+    const clave = gr.getAttribute('data-group');
+    const cerrado = cl_grupoColapsado[`${tablaId}|${clave}`];
+    if (q){
+      if (limitarAAbiertos && cerrado){
+        // Grupo cerrado no participa en la búsqueda: mostrar encabezado atenuado
+        gr.style.display = '';
+        gr.classList.add('grupo-fuera-busqueda');
+      } else {
+        gr.classList.remove('grupo-fuera-busqueda');
+        const hayVisibles = [...card.querySelectorAll(`tr[data-group-row="${cssEscapa(clave)}"]`)]
+          .some(tr => tr.style.display !== 'none');
+        gr.style.display = hayVisibles ? '' : 'none';
+      }
+    } else {
+      gr.style.display = '';
+      gr.classList.remove('grupo-fuera-busqueda');
+    }
+  });
+
+  // Mensaje "sin resultados"
+  const noRes = card.querySelector('.tbl-no-results');
+  if (noRes) noRes.style.display = (q && visibles === 0 && filas.length) ? '' : 'none';
+
+  // Total recalculado sobre lo visible
+  const totEl = card.querySelector('.tbl-total-val');
+  if (totEl) totEl.textContent = fmtCOP(total);
+
+  // Contador "N de M"
+  const cnt = card.querySelector('.ech-search-count');
+  if (cnt) cnt.textContent = q ? `${visibles} de ${filas.length}` : '';
+
+  // Botón limpiar visible solo con texto
+  const x = card.querySelector('.ech-search-x');
+  if (x) x.style.display = q ? '' : 'none';
+};
+
+window.cl_limpiarBusquedaTabla = (tablaId) => {
+  const inp = document.getElementById('busq-'+tablaId);
+  if (inp) inp.value = '';
+  cl_filtrarTablaBusqueda(tablaId, '');
+  if (inp) inp.focus();
+};
+
+window.cl_toggleGrupoMes = (tablaId, clave, filaCab) => {
+  const key = `${tablaId}|${clave}`;
+  const colapsar = !cl_grupoColapsado[key];
+  cl_grupoColapsado[key] = colapsar;
+  persistirGrupoColapsado();
+
+  const card = document.getElementById('tcard-'+tablaId) || filaCab.closest('.egr-custom-card, .egr-madre-wrap');
+  if (!card) return;
+  filaCab.classList.toggle('colapsado', colapsar);
+  card.querySelectorAll(`tr[data-group-row="${cssEscapa(clave)}"]`).forEach(tr=>{
+    tr.style.display = colapsar ? 'none' : '';
+  });
+};
+
+function cl_renderCustomTables() {
+  const box = document.getElementById('egresoCustomTablesV2');
+  if (!box) return;
+  if (!cl_tablasEgreso.length) { box.innerHTML=''; return; }
+
+  box.innerHTML = cl_tablasEgreso.map(t=>{
+    // Filter by identificador(s) if selected
+    const allFilas = t.filas||[];
+    const selIds   = t._selectedIdents?.length ? t._selectedIdents
+                   : (t._selectedIdent ? [t._selectedIdent] : []);
+    const filas = selIds.length
+      ? allFilas.filter(f=> selIds.includes(f.identId))
+      : allFilas;
+    const totalPagar = filas.reduce((s,f)=>s+(Number(f.valorPagar)||0),0);
+
+    const filaHtml = (f)=>{
+      const realIdx = allFilas.indexOf(f); // real index regardless of filter
+      // Texto indexado para el buscador (factura, nombre, tipo de persona, mes)
+      const blob = normBusq([f.factura, f.nombre, f.tipoPersona, f.mes].join(' '));
+      return `
+      <tr data-search="${escHtml(blob)}" data-pagar="${Number(f.valorPagar)||0}">
+        <td>${escHtml(f.factura||'—')}</td>
+        <td>${f.mes||'—'}</td>
+        <td>${escHtml(f.nombre||'—')}</td>
+        <td>${escHtml(f.tipoPersona||'—')}</td>
+        <td class="td-money">${fmtCOP(f.valorFactura)}</td>
+        <td class="td-money">${fmtCOP(f.abono)}</td>
+        <td class="td-money">${fmtCOP(f.glosa)}</td>
+        <td class="td-money">${fmtCOP(f.reteFuente)}</td>
+        <td class="td-money">${fmtCOP(f.afc)}</td>
+        <td class="td-money">${fmtCOP(f.residentes)}</td>
+        <td class="td-money">${fmtCOP(f.tiquetes)}</td>
+        <td class="td-money">${fmtCOP(f.hotel)}</td>
+        <td class="td-money">${fmtCOP(f.transporte)}</td>
+        <td class="col-pagar-val td-money ${Number(f.valorPagar)<0?'neg':''}">${fmtCOP(f.valorPagar)}</td>
+        <td>
+          <div class="tbl-actions">
+            <button class="act-btn edit" onclick="cl_openTablaRowModal('${t.id}',${realIdx})"><i class="fa-solid fa-pen"></i></button>
+            <button class="act-btn" style="${f.correoEnviado?'background:#e8f5e9;color:#2e7d32':'background:var(--blue-pale);color:var(--blue)'}" title="${f.correoEnviado?'Correo enviado — reenviar':'Enviar por correo'}" onclick="cl_openEnviarModal('${t.id}',${realIdx})"><i class="fa-solid ${f.correoEnviado?'fa-circle-check':'fa-paper-plane'}"></i></button>
+            <button class="act-btn del" onclick="cl_deleteTablaRow('${t.id}',${realIdx})"><i class="fa-solid fa-trash"></i></button>
+          </div>
+        </td>
+      </tr>`;
+    };
+
+    // ── Agrupar filas por mes (encabezados colapsables) ──
+    const grupos = agruparPorMes(filas);
+    const rows = grupos.map(g => {
+      const colapsado = cl_grupoColapsado[`${t.id}|${g.clave}`] ? 'colapsado' : '';
+      const totalGrupo = g.filas.reduce((s,f)=>s+(Number(f.valorPagar)||0),0);
+      const cab = `<tr class="tbl-group-row ${colapsado}" data-group="${escHtml(g.clave)}" onclick="cl_toggleGrupoMes('${t.id}','${escHtml(g.clave)}',this)">
+        <td colspan="14" class="tbl-group-cell">
+          <i class="fa-solid fa-chevron-down tbl-group-chevron"></i>
+          <i class="fa-solid fa-folder-open tbl-group-folder"></i>
+          <span class="tbl-group-label">${escHtml(g.etiqueta)}</span>
+          <span class="tbl-group-count">${g.filas.length} factura${g.filas.length!==1?'s':''}</span>
+        </td>
+        <td class="td-money tbl-group-total">${fmtCOP(totalGrupo)}</td>
+      </tr>`;
+      const cuerpo = g.filas.map(f => filaHtml(f).replace('<tr ', `<tr data-group-row="${escHtml(g.clave)}" `)).join('');
+      return cab + cuerpo;
+    }).join('');
+
+    return `<div class="egr-custom-card" id="tcard-${t.id}">
+      <div class="egr-custom-head">
+        ${t.logoIzq?`<img src="${t.logoIzq}" class="egr-custom-logo" alt="logo"/>`:''}
+        <div class="ech-nombre"><i class="fa-solid fa-table-columns" style="opacity:.6;margin-right:5px"></i>${escHtml(t.nombre)}</div>
+        ${t.logoDer?`<img src="${t.logoDer}" class="egr-custom-logo" alt="logo"/>`:''}
+        <div class="ech-divider"></div>
+        <!-- Checklists -->
+        <label class="ech-check" title="Revisado por Contabilidad">
+          <input type="checkbox" ${t._chkContabilidad?'checked':''} onchange="cl_toggleTablaCheck('${t.id}','contabilidad',event.target.checked)" style="accent-color:#4ade80"/>
+          <span>Contabilidad</span>
+        </label>
+        <label class="ech-check" title="Facturación">
+          <input type="checkbox" ${t._chkFacturacion?'checked':''} onchange="cl_toggleTablaCheck('${t.id}','facturacion',event.target.checked)" style="accent-color:#60a5fa"/>
+          <span>Facturación</span>
+        </label>
+        <div class="ech-divider"></div>
+        <!-- Identificador -->
+        <div class="ech-ident">
+          <i class="fa-solid fa-tag" style="color:rgba(255,255,255,.5);font-size:10px"></i>
+          <select class="egr-ident-sel" id="ident-${t.id}" multiple size="1"
+            onchange="cl_onIdentChange('${t.id}',this)"
+            style="min-width:140px;cursor:pointer"
+            title="Ctrl+clic para selección múltiple">
+            ${cl_egresos.map(e=>{
+              const selIds = t._selectedIdents||[];
+              const isSel  = selIds.includes(e.id);
+              return `<option value="${e.id}" ${isSel?'selected':''}>${escHtml(e.factura||e.nombre||e.id)}</option>`;
+            }).join('')}
+          </select>
+        </div>
+        <div class="ech-divider"></div>
+        <!-- Buscador -->
+        <div class="ech-search">
+          <i class="fa-solid fa-magnifying-glass ech-search-ico"></i>
+          <input type="text" class="ech-search-input" id="busq-${t.id}"
+            placeholder="Buscar por factura"
+            value="${escHtml(cl_busquedaTablas[t.id]||'')}"
+            oninput="cl_filtrarTablaBusqueda('${t.id}', this.value)"/>
+          <button class="ech-search-x" title="Limpiar" onclick="cl_limpiarBusquedaTabla('${t.id}')">&times;</button>
+          <span class="ech-search-count"></span>
+        </div>
+        <div class="ech-divider"></div>
+        <!-- Acciones -->
+        <div class="ech-actions">
+          <button class="ech-btn" onclick="cl_openTablaRowModal('${t.id}',null)" title="Nueva fila"><i class="fa-solid fa-plus"></i> Nueva fila</button>
+          <button class="ech-btn ech-btn-green" onclick="cl_exportarTablaExcel('${t.id}')" title="Exportar Excel"><i class="fa-solid fa-file-excel"></i> Excel</button>
+          <button class="ech-btn-icon" onclick="cl_editTabla('${t.id}')" title="Editar"><i class="fa-solid fa-pen"></i></button>
+          <button class="ech-btn-icon ech-btn-red" onclick="cl_deleteTabla('${t.id}')" title="Eliminar"><i class="fa-solid fa-trash"></i></button>
+        </div>
+      </div>
+      <div class="egr-custom-table-wrap">
+        <table class="egr-custom-table">
+          <colgroup>
+            <col class="cc-factura"/><col class="cc-mes"/><col class="cc-nombre"/><col class="cc-tipopersona"/>
+            <col class="cc-money"/><col class="cc-money"/><col class="cc-money"/><col class="cc-money"/>
+            <col class="cc-money"/><col class="cc-money"/><col class="cc-money"/><col class="cc-money"/>
+            <col class="cc-money"/><col class="cc-pagar"/><col class="cc-acciones"/>
+          </colgroup>
+          <thead><tr>
+            <th>FACTURA</th><th>MES</th><th>NOMBRE ESPECIALISTA</th><th>TIPO DE PERSONA</th>
+            <th class="th-money">VALOR FACTURA</th><th class="th-money">ABONO</th><th class="th-money">GLOSA</th>
+            <th class="th-money">RETE FUENTE</th><th class="th-money">AFC</th><th class="th-money">RESIDENTES</th>
+            <th class="th-money">TIQUETES</th><th class="th-money">HOTEL</th><th class="th-money">TRANSPORTE</th>
+            <th class="col-pagar th-money">VALOR A PAGAR</th><th></th>
+          </tr></thead>
+          <tbody>${rows||`<tr><td colspan="15" style="text-align:center;padding:20px;color:var(--gray-3)">Sin filas. Añade la primera.</td></tr>`}
+            <tr class="tbl-no-results" style="display:none"><td colspan="15" style="text-align:center;padding:20px;color:var(--gray-3)"><i class="fa-solid fa-magnifying-glass" style="opacity:.5;margin-right:6px"></i>Sin resultados para la búsqueda.</td></tr>
+          </tbody>
+          ${filas.length?`<tfoot><tr>
+            <td colspan="13" style="text-align:right;font-weight:800;padding:9px 12px;color:var(--gray-4);font-size:12px">TOTAL:</td>
+            <td class="tbl-total-val" style="font-weight:800;color:var(--navy);background:#eef4ff;padding:9px 12px">${fmtCOP(totalPagar)}</td>
+            <td></td>
+          </tr></tfoot>`:''}
+        </table>
+      </div>
+    </div>`;
+  }).join('');
+
+  // Aplicar el estado guardado de carpetas colapsadas (ocultar sus filas)
+  // y re-aplicar cualquier búsqueda activa tras el re-render.
+  cl_tablasEgreso.forEach(t => {
+    const card = document.getElementById('tcard-'+t.id);
+    if (!card) return;
+    card.querySelectorAll('.tbl-group-row').forEach(gr => {
+      const clave = gr.getAttribute('data-group');
+      if (cl_grupoColapsado[`${t.id}|${clave}`]) {
+        gr.classList.add('colapsado');
+        card.querySelectorAll(`tr[data-group-row="${cssEscapa(clave)}"]`)
+          .forEach(tr => tr.style.display = 'none');
+      }
+    });
+    if (cl_busquedaTablas[t.id]) cl_filtrarTablaBusqueda(t.id, cl_busquedaTablas[t.id]);
+  });
+}
+
+window.cl_openTablaRowModal = (tablaId, idx) => {
+  cl_editTablaRowTablaId = tablaId;
+  cl_editTablaRowIdx     = idx;
+  const tabla = cl_tablasEgreso.find(t=>t.id===tablaId);
+  // Validate: need identificador to add new row
+  if(idx===null && !(tabla?._selectedIdents?.length || tabla?._selectedIdent)) {
+    toast('Debes seleccionar un Identificador antes de agregar filas.','error');
+    return;
+  }
+  const f = (idx !== null && idx !== undefined) ? tabla?.filas?.[idx] : null;
+  document.getElementById('tablaRowTitleV2').textContent = f?'Editar Fila':'Nueva Fila';
+  document.getElementById('tablaRowTablaIdV2').value = tablaId;
+  document.getElementById('tablaRowIdV2').value = idx??'';
+  document.getElementById('trFacturaV2').value     = f?.factura||'';
+  document.getElementById('trMesV2').value         = f?.mes||'';
+
+  // Poblar select de especialistas desde CLIENTES y restaurar selección
+  const selNombre = document.getElementById('trNombreV2');
+  const especialistas = [...new Set(doctors.filter(d=>d.especialista).map(d=>d.especialista))].sort();
+  const savedNombre = f?.nombre||'';
+  // Build options with 'selected' attribute directly on the matching option
+  selNombre.innerHTML = '<option value="">— Seleccionar especialista —</option>'
+    + especialistas.map(e=>`<option value="${escHtml(e)}" ${e===savedNombre?'selected':''}>${escHtml(e)}</option>`).join('')
+    + (savedNombre && !especialistas.includes(savedNombre)
+        ? `<option value="${escHtml(savedNombre)}" selected>${escHtml(savedNombre)}</option>` : '');
+  // Force value after DOM update
+  selNombre.value = savedNombre;
+
+  const selTipoP = document.getElementById('trTipoPersonaV2');
+  if (selTipoP) selTipoP.value = f?.tipoPersona||'';
+
+  document.getElementById('trValorFacturaV2').value= f?.valorFactura||'';
+  document.getElementById('trAbonoV2').value       = f?.abono||'';
+  document.getElementById('trGlosaV2').value       = f?.glosa||'';
+  document.getElementById('trReteFuenteV2').value  = f?.reteFuente||'';
+  document.getElementById('trAfcV2').value         = f?.afc||'';
+  document.getElementById('trResidentesV2').value  = f?.residentes||'';
+  document.getElementById('trTiquetesV2').value    = f?.tiquetes||'';
+  document.getElementById('trHotelV2').value       = f?.hotel||'';
+  document.getElementById('trTransporteV2').value  = f?.transporte||'';
+  cl_calcValorPagar();
+  document.getElementById('egresoAutoInfoV2').style.display='none';
+  document.getElementById('tablaRowModalV2').classList.add('open');
+};
+
+window.cl_closeTablaRowModal = () => {
+  document.getElementById('tablaRowModalV2').classList.remove('open');
+  cl_editTablaRowTablaId = null; cl_editTablaRowIdx = null;
+};
+
+window.cl_autocompletarDesdeEgreso = () => {
+  const factura = document.getElementById('trFacturaV2').value.trim().toLowerCase();
+  if (!factura) return;
+
+  const infoEl = document.getElementById('egresoAutoInfoV2');
+  const msgEl  = document.getElementById('egresoAutoMsgV2');
+
+  // 1. Buscar PRIMERO en facturas hijas — son los registros reales
+  let foundHija = null;
+  for (const e of cl_egresos) {
+    const hija = (e.hijas||[]).find(h => (h.factura||'').toLowerCase() === factura);
+    if (hija) { foundHija = hija; break; }
+  }
+
+  if (foundHija) {
+    document.getElementById('trMesV2').value          = foundHija.honorarioMes || '';
+    // Set select value for nombre
+    const sel = document.getElementById('trNombreV2');
+    if (sel) sel.value = foundHija.nombre || '';
+    document.getElementById('trValorFacturaV2').value = foundHija.valorEspecialista || 0;
+    cl_calcValorPagar();
+    infoEl.style.display = 'flex';
+    msgEl.textContent = `✓ Factura hija encontrada: ${foundHija.factura} · ${foundHija.nombre}`;
+    return;
+  }
+
+  if (foundMadre) {
+    document.getElementById('trMesV2').value          = foundMadre.honorarioMes      || '';
+    const sel = document.getElementById('trNombreV2');
+    if (sel) sel.value = foundMadre.nombre || '';
+    document.getElementById('trValorFacturaV2').value = foundMadre.valorEspecialista || 0;
+    cl_calcValorPagar();
+    infoEl.style.display = 'flex';
+    msgEl.textContent = `✓ Factura madre encontrada: ${foundMadre.factura} · ${foundMadre.nombre}`;
+    return;
+  }
+
+  infoEl.style.display = 'none';
+};
+
+window.cl_calcValorPagar = () => {
+  const g     = id => Number(document.getElementById(id)?.value)||0;
+  const abono = g('trAbonoV2');
+  const descuentos = g('trGlosaV2') + g('trReteFuenteV2') + g('trAfcV2')
+                   + g('trResidentesV2') + g('trTiquetesV2')
+                   + g('trHotelV2') + g('trTransporteV2');
+  // Si ABONO > 0: base = ABONO. Si ABONO = 0: base = VALOR FACTURA
+  const base  = abono > 0 ? abono : g('trValorFacturaV2');
+  const total = base - descuentos;
+  const el = document.getElementById('trValorPagarV2');
+  if (el) { el.value = total; el.style.color = total < 0 ? 'var(--red)' : 'var(--navy)'; }
+};
+
+window.cl_saveTablaRow = async () => {
+  // Si ya hay un guardado en curso, ignorar (evita doble ejecución)
+  if (cl__guardandoFila) return;
+
+  const tablaId = cl_editTablaRowTablaId;
+  const tabla   = cl_tablasEgreso.find(t=>t.id===tablaId);
+  if (!tabla) return;
+
+  // Guardar identIds actuales de la tabla (soporte múltiple)
+  const tablaForIdent  = cl_tablasEgreso.find(t=>t.id===tablaId);
+  const currentIdentIds = tablaForIdent?._selectedIdents?.length
+    ? tablaForIdent._selectedIdents
+    : (tablaForIdent?._selectedIdent ? [tablaForIdent._selectedIdent] : []);
+  const currentIdentId  = currentIdentIds[0]||'';
+
+  const esEdicion = (cl_editTablaRowIdx !== null && cl_editTablaRowIdx !== undefined);
+
+  const fila = {
+    // ID único estable por fila (para editar/eliminar sin ambigüedad y detectar duplicados)
+    rowId:        esEdicion ? (tabla.filas?.[cl_editTablaRowIdx]?.rowId || genRowId()) : genRowId(),
+    identId:      currentIdentId,   // primary (backward compat)
+    identIds:     currentIdentIds,  // all selected
+    factura:      document.getElementById('trFacturaV2').value.trim(),
+    mes:          document.getElementById('trMesV2').value,
+    nombre:       document.getElementById('trNombreV2').value.trim(),
+    tipoPersona:  document.getElementById('trTipoPersonaV2')?.value||'',
+    valorFactura: Number(document.getElementById('trValorFacturaV2').value)||0,
+    abono:        Number(document.getElementById('trAbonoV2').value)||0,
+    glosa:        Number(document.getElementById('trGlosaV2').value)||0,
+    reteFuente:   Number(document.getElementById('trReteFuenteV2').value)||0,
+    afc:          Number(document.getElementById('trAfcV2').value)||0,
+    residentes:   Number(document.getElementById('trResidentesV2').value)||0,
+    tiquetes:     Number(document.getElementById('trTiquetesV2').value)||0,
+    hotel:        Number(document.getElementById('trHotelV2').value)||0,
+    transporte:   Number(document.getElementById('trTransporteV2').value)||0,
+    valorPagar:   Number(document.getElementById('trValorPagarV2').value)||0,
+  };
+
+  const filas = [...(tabla.filas||[])];
+
+  // ── Validación anti-duplicados: la factura no puede existir ya en esta tabla ──
+  const facturaNueva = (fila.factura||'').trim().toLowerCase();
+  if (facturaNueva) {
+    const duplicada = filas.some((f, i) => {
+      // Al editar, ignorar la propia fila que se está editando
+      if (esEdicion && i === cl_editTablaRowIdx) return false;
+      return (f.factura||'').trim().toLowerCase() === facturaNueva;
+    });
+    if (duplicada) {
+      toast(`La factura "${fila.factura}" ya existe en esta tabla. No se puede duplicar.`, 'error');
+      return;
+    }
+  }
+
+  // Activar candado y deshabilitar el botón ANTES del await
+  cl__guardandoFila = true;
+  const btnGuardar = document.querySelector('#tablaRowModal .btn-primary');
+  const btnHtmlPrev = btnGuardar?.innerHTML;
+  if (btnGuardar) { btnGuardar.disabled = true; btnGuardar.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Guardando...'; }
+
+  if (esEdicion) {
+    filas[cl_editTablaRowIdx] = fila;
+  } else {
+    filas.push(fila);
+  }
+
+  try {
+    await updateDoc(doc(db,'tablasEgreso_v2',tablaId),{filas, updatedAt:serverTimestamp()});
+    toast('Fila guardada.','success');
+    cl_closeTablaRowModal();
+  } catch(e) {
+    toast('Error: '+e.message,'error');
+  } finally {
+    // Liberar candado y restaurar botón siempre
+    cl__guardandoFila = false;
+    if (btnGuardar) { btnGuardar.disabled = false; btnGuardar.innerHTML = btnHtmlPrev; }
+  }
+};
+
+window.cl_deleteTablaRow = async (tablaId, idx) => {
+  if (!confirm('¿Eliminar esta fila?')) return;
+  const tabla = cl_tablasEgreso.find(t=>t.id===tablaId);
+  if (!tabla) return;
+  const filas = [...(tabla.filas||[])];
+  filas.splice(idx,1);
+  try {
+    await updateDoc(doc(db,'tablasEgreso_v2',tablaId),{filas});
+    toast('Fila eliminada.');
+  } catch(e) { toast('Error: '+e.message,'error'); }
+};
+
+window.cl_openLiquidacion = (tablaId, idx) => {
+  const tabla = cl_tablasEgreso.find(t=>t.id===tablaId);
+  const f     = tabla?.filas?.[idx];
+  if (!f) return;
+
+  const descuentos = [
+    {lbl:'Abono',       val:f.abono},
+    {lbl:'Glosa',       val:f.glosa},
+    {lbl:'Rete Fuente', val:f.reteFuente},
+    {lbl:'AFC',         val:f.afc},
+    {lbl:'Residentes',  val:f.residentes},
+    {lbl:'Tiquetes',    val:f.tiquetes},
+    {lbl:'Hotel',       val:f.hotel},
+    {lbl:'Transporte',  val:f.transporte},
+  ].filter(d=>Number(d.val)>0);
+
+  const totalDesc = descuentos.reduce((s,d)=>s+Number(d.val),0);
+  const mesLabel  = f.mes ? new Date(f.mes+'-15').toLocaleDateString('es-CO',{month:'long',year:'numeric'}) : '—';
+
+  document.getElementById('liquidacionContentV2').innerHTML = `
+    <div class="liq-wrap">
+      <div class="liq-header">
+        <div>
+          <div class="liq-title">Liquidación de Honorarios</div>
+          <div class="liq-sub">${escHtml(tabla.nombre)}</div>
+        </div>
+        <div style="text-align:right;font-size:12px;opacity:.6">
+          Generado: ${new Date().toLocaleDateString('es-CO')}<br/>
+          Factura: <strong style="opacity:1;font-size:14px">${escHtml(f.factura||'—')}</strong>
+        </div>
+      </div>
+
+      <div class="liq-info-grid">
+        <div class="liq-info-box">
+          <div class="liq-info-lbl">Especialista</div>
+          <div class="liq-info-val">${escHtml(f.nombre||'—')}</div>
+        </div>
+        <div class="liq-info-box">
+          <div class="liq-info-lbl">Mes de gestión</div>
+          <div class="liq-info-val" style="text-transform:capitalize">${mesLabel}</div>
+        </div>
+        <div class="liq-info-box">
+          <div class="liq-info-lbl">Valor Factura</div>
+          <div class="liq-info-val" style="color:var(--navy)">${fmtCOP(f.valorFactura)}</div>
+        </div>
+      </div>
+
+      ${descuentos.length?`
+      <table class="liq-table">
+        <thead><tr><th>Concepto de descuento</th><th style="text-align:right">Valor</th></tr></thead>
+        <tbody>
+          ${descuentos.map(d=>`
+            <tr>
+              <td>${d.lbl}</td>
+              <td class="desc" style="text-align:right">(${fmtCOP(d.val)})</td>
+            </tr>`).join('')}
+          <tr style="font-weight:700;background:var(--gray-0)">
+            <td>Total descuentos</td>
+            <td class="desc" style="text-align:right">(${fmtCOP(totalDesc)})</td>
+          </tr>
+        </tbody>
+      </table>`:'<p style="color:var(--gray-3);margin-bottom:16px;font-size:13px">Sin descuentos aplicados.</p>'}
+
+      <div class="liq-total-row">
+        <div class="liq-total-lbl">VALOR A PAGAR</div>
+        <div class="liq-total-val">${fmtCOP(f.valorPagar)}</div>
+      </div>
+    </div>`;
+
+  document.getElementById('liquidacionModalV2').classList.add('open');
+};
+
+window.cl_closeLiquidacionModal = () =>
+  document.getElementById('liquidacionModalV2').classList.remove('open');
+
+window.cl_initEgresos = cl_initEgresos;
+
+/* ══════════════════════════════════════════════════
+   COMPROBANTE DE EGRESO
+══════════════════════════════════════════════════ */
+
+let compLogoBase64 = '';
+
+const MESES_COMP = {
+  '01':'ENERO','02':'FEBRERO','03':'MARZO','04':'ABRIL','05':'MAYO','06':'JUNIO',
+  '07':'JULIO','08':'AGOSTO','09':'SEPTIEMBRE','10':'OCTUBRE','11':'NOVIEMBRE','12':'DICIEMBRE'
+};
+
+window.cl_openComprobanteModal = () => {
+  // Poblar IPS primero — especialista se llenará dinámicamente
+  const selIPS = document.getElementById('compIPSV2');
+  selIPS.innerHTML = '<option value="">— Seleccionar —</option>'
+    + cl_tablasEgreso.map(t=>`<option value="${t.id}">${escHtml(t.nombre)}</option>`).join('');
+
+  // Especialista vacío hasta que se seleccione IPS
+  document.getElementById('compEspecialistaV2').innerHTML = '<option value="">— Primero selecciona IPS —</option>';
+  document.getElementById('compMesV2').innerHTML = '<option value="">— Seleccionar —</option>';
+
+  // Fecha hoy
+  const hoy = new Date().toISOString().slice(0,10);
+  document.getElementById('compFechaV2').value = hoy;
+  cl_onCompFechaChange();
+
+  // Logo guardado
+  if (compLogoBase64) {
+    document.getElementById('compLogoImgV2').src = compLogoBase64;
+    document.getElementById('compLogoImgV2').style.display = 'block';
+    document.getElementById('compLogoPlaceholderV2').style.display = 'none';
+  }
+
+  // Limpiar campos
+  ['compNombreV2','compDocumentoV2','compProveedorV2','compCorreoV2',
+   'compIPSValV2','compMesValV2','compFacturaV2','compValorFacturaV2',
+   'compAbonoV2','compReteFuenteV2','compGlosaV2','compAfcV2','compResidentesV2','compTiquetesV2','compHotelV2','compTransporteV2',
+   'compBancoV2','compNCuentaV2','compTipoCuentaV2','compTitularV2',
+   ].forEach(id => { const el=document.getElementById(id); if(el) el.value=''; });
+  document.getElementById('compFirma1V2').value = 'Angela Paredes';
+  document.getElementById('compFirma2V2').value = 'Rosa Castellanos';
+  document.getElementById('compFirma3V2').value = 'Angela Paredes';
+  document.getElementById('compMedioPagoV2').value = 'TRANSFERENCIA BANCARIA';
+  document.getElementById('compNetoDisplayV2').textContent = '0';
+
+  document.getElementById('comprobanteModalV2').classList.add('open');
+};
+
+window.cl_closeComprobanteModal = () =>
+  document.getElementById('comprobanteModalV2').classList.remove('open');
+
+/* ── Logo ── */
+window.cl_handleCompLogo = (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const r = new FileReader();
+  r.onload = ev => {
+    compLogoBase64 = ev.target.result;
+    document.getElementById('compLogoImgV2').src = compLogoBase64;
+    document.getElementById('compLogoImgV2').style.display = 'block';
+    document.getElementById('compLogoPlaceholderV2').style.display = 'none';
+  };
+  r.readAsDataURL(file);
+};
+
+window.cl_onCompFechaChange = () => {
+  const fecha = document.getElementById('compFechaV2').value;
+  if (!fecha) return;
+  const [,, dd] = fecha.split('-');
+  const mm = fecha.slice(5,7);
+  document.getElementById('compConsecutivoV2').value = `${dd}-${mm}`;
+};
+
+window.cl_onCompEspecialistaChange = () => {
+  const esp = document.getElementById('compEspecialistaV2').value;
+  if (!esp) return;
+  // Buscar cliente por especialista o por nombre (para compatibilidad)
+  const cliente = doctors.find(d => d.especialista === esp) || doctors.find(d => d.nombre === esp);
+  if (!cliente) { cl_autocompletarFinanciero(); return; }
+  document.getElementById('compNombreV2').value    = cliente.especialista || '';
+  document.getElementById('compDocumentoV2').value = cliente.nit          || '';
+  document.getElementById('compProveedorV2').value = cliente.nombre       || '';
+  document.getElementById('compCorreoV2').value    = cliente.correo       || '';
+  // Datos de pago
+  document.getElementById('compBancoV2').value     = cliente.banco        || '';
+  document.getElementById('compNCuentaV2').value   = cliente.nCuenta      || '';
+  document.getElementById('compTipoCuentaV2').value= cliente.tipoCuenta   || '';
+  document.getElementById('compTitularV2').value   = cliente.especialista  || '';
+
+  // Si ya hay IPS y mes, intentar autocompletar financiero
+  cl_autocompletarFinanciero();
+};
+
+window.cl_onCompIPSChange = () => {
+  const tablaId = document.getElementById('compIPSV2').value;
+  const selMes  = document.getElementById('compMesV2');
+  const selEsp  = document.getElementById('compEspecialistaV2');
+  selMes.innerHTML = '<option value="">— Seleccionar —</option>';
+  selEsp.innerHTML = '<option value="">— Seleccionar —</option>';
+
+  if (!tablaId) {
+    selEsp.innerHTML = '<option value="">— Primero selecciona IPS —</option>';
+    return;
+  }
+  const tabla = cl_tablasEgreso.find(t=>t.id===tablaId);
+  if (!tabla) return;
+
+  // Extraer especialistas únicos de las filas de esta tabla
+  const esps = [...new Set((tabla.filas||[]).map(f=>f.nombre).filter(Boolean))].sort();
+  selEsp.innerHTML = '<option value="">— Seleccionar —</option>'
+    + esps.map(e=>`<option value="${escHtml(e)}">${escHtml(e)}</option>`).join('');
+
+  // Extraer meses únicos de las filas
+  const meses = [...new Set((tabla.filas||[]).map(f=>f.mes).filter(Boolean))].sort();
+  selMes.innerHTML = '<option value="">— Seleccionar —</option>'
+    + meses.map(m=>{
+        const label = MESES_COMP[m.slice(5,7)] || m;
+        return `<option value="${m}">${label}</option>`;
+      }).join('');
+
+  // Nombre IPS en el doc
+  document.getElementById('compIPSValV2').value = tabla.nombre || '';
+  // Limpiar selección anterior
+  document.getElementById('compEspecialistaV2').value = '';
+  cl_autocompletarFinanciero();
+};
+
+window.cl_onCompMesChange = () => {
+  const mes = document.getElementById('compMesV2').value;
+  if (mes) {
+    const label = MESES_COMP[mes.slice(5,7)] || mes;
+    document.getElementById('compMesValV2').value = label;
+  }
+  cl_autocompletarFinanciero();
+};
+
+function cl_autocompletarFinanciero() {
+  const tablaId = document.getElementById('compIPSV2').value;
+  const mes     = document.getElementById('compMesV2').value;
+  const esp     = document.getElementById('compEspecialistaV2').value;
+  if (!tablaId || !mes || !esp) return;
+
+  const tabla = cl_tablasEgreso.find(t=>t.id===tablaId);
+  if (!tabla) return;
+
+  // Buscar fila que coincida con mes Y nombre especialista
+  const fila = (tabla.filas||[]).find(f =>
+    f.mes === mes && f.nombre === esp
+  );
+  if (!fila) return;
+
+  document.getElementById('compFacturaV2').value     = fila.factura      || '';
+  document.getElementById('compValorFacturaV2').value= fila.valorFactura || 0;
+  document.getElementById('compAbonoV2').value       = fila.abono        || 0;
+  document.getElementById('compReteFuenteV2').value  = fila.reteFuente   || 0;
+  document.getElementById('compGlosaV2').value       = fila.glosa        || 0;
+  document.getElementById('compAfcV2').value         = fila.afc          || 0;
+  document.getElementById('compResidentesV2').value  = fila.residentes  || 0;
+  document.getElementById('compTiquetesV2').value    = fila.tiquetes    || 0;
+  document.getElementById('compHotelV2').value       = fila.hotel       || 0;
+  document.getElementById('compTransporteV2').value  = fila.transporte  || 0;
+  cl_calcCompNeto();
+}
+
+window.cl_calcCompNeto = () => {
+  const g    = id => Number(document.getElementById(id)?.value)||0;
+  const abono = g('compAbonoV2');
+  const base  = abono > 0 ? abono : g('compValorFacturaV2');
+  const neto  = base - g('compGlosaV2') - g('compReteFuenteV2') - g('compAfcV2')
+              - g('compResidentesV2') - g('compTiquetesV2')
+              - g('compHotelV2') - g('compTransporteV2');
+  document.getElementById('compNetoDisplayV2').textContent =
+    neto.toLocaleString('es-CO');
+};
+
+window.cl_imprimirComprobante = () => {
+  const modal = document.getElementById('comprobanteModalV2');
+  if (!modal.classList.contains('open')) return;
+  document.body.classList.add('printing-comprobante');
+  window.print();
+  window.onafterprint = () => {
+    document.body.classList.remove('printing-comprobante');
+    window.onafterprint = null;
+  };
+  // Fallback
+  setTimeout(() => document.body.classList.remove('printing-comprobante'), 3000);
+};
+
+window.cl_exportarFacturacionMensualExcel = () => {
+  if (!window.XLSX) { toast('SheetJS no disponible.','error'); return; }
+  if (!cl_egresos.length) { toast('Sin datos para exportar.','error'); return; }
+
+  const fmtNum = v => v ? Number(v) : 0;
+  const rows = [];
+
+  cl_egresos.forEach(e => {
+    // Fila madre
+    rows.push([
+      e.honorarioMes||'', e.concepto||'', e.nombre||'',
+      fmtNum(e.valorEntidad), fmtNum(e.administracion),
+      fmtNum(e.valorEspecialista), e.factura||'', 'MADRE', ''
+    ]);
+    // Filas hijas
+    (e.hijas||[]).forEach(h => {
+      rows.push([
+        h.honorarioMes||'', h.concepto||'', h.nombre||'',
+        fmtNum(h.valorEntidad), fmtNum(h.administracion),
+        fmtNum(h.valorEspecialista), h.factura||'', 'HIJA', e.factura||''
+      ]);
+    });
+  });
+
+  const headers = [
+    'HONORARIO MES','CONCEPTO','NOMBRE',
+    'VALOR ENTIDAD','ADMINISTRACIÓN','VALOR ESPECIALISTA',
+    'FACTURA','TIPO','FACTURA MADRE'
+  ];
+
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+  ws['!cols'] = [{wch:12},{wch:28},{wch:22},{wch:14},{wch:14},{wch:16},{wch:14},{wch:8},{wch:14}];
+  // Negrita encabezado
+  const range = XLSX.utils.decode_range(ws['!ref']||'A1');
+  for(let C=range.s.c;C<=range.e.c;C++){
+    const cell = XLSX.utils.encode_cell({r:0,c:C});
+    if(ws[cell]) ws[cell].s = {font:{bold:true}};
+  }
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Facturación Mensual');
+  XLSX.writeFile(wb, `Facturacion_Mensual_${new Date().toISOString().slice(0,7)}.xlsx`);
+  toast('✅ Excel exportado.','success');
+};
+
+window.cl_exportarTablaExcel = (tablaId) => {
+  if (!window.XLSX) { toast('SheetJS no disponible. Recarga la página.','error'); return; }
+
+  const tabla = cl_tablasEgreso.find(t=>t.id===tablaId);
+  if (!tabla) { toast('Tabla no encontrada.','error'); return; }
+
+  const allFilas = tabla.filas||[];
+  const selIdent = tabla._selectedIdent||'';
+  const filas = selIdent ? allFilas.filter(f=>f.identId===selIdent) : allFilas;
+  if (!filas.length) { toast('La tabla no tiene filas para exportar.','error'); return; }
+
+  const fmtNum = v => v ? Number(v) : 0;
+
+  // Encabezados
+  const headers = [
+    'FACTURA','MES','NOMBRE ESPECIALISTA','TIPO DE PERSONA','VALOR FACTURA',
+    'ABONO','GLOSA','RETE FUENTE','AFC','RESIDENTES',
+    'TIQUETES','HOTEL','TRANSPORTE','VALOR A PAGAR'
+  ];
+
+  // Filas de datos
+  const rows = filas.map(f=>[
+    f.factura     || '',
+    f.mes         || '',
+    f.nombre      || '',
+    f.tipoPersona || '',
+    fmtNum(f.valorFactura),
+    fmtNum(f.abono),
+    fmtNum(f.glosa),
+    fmtNum(f.reteFuente),
+    fmtNum(f.afc),
+    fmtNum(f.residentes),
+    fmtNum(f.tiquetes),
+    fmtNum(f.hotel),
+    fmtNum(f.transporte),
+    fmtNum(f.valorPagar),
+  ]);
+
+  // Fila de totales
+  const totales = [
+    'TOTAL','','',
+    filas.reduce((s,f)=>s+fmtNum(f.valorFactura),0),
+    filas.reduce((s,f)=>s+fmtNum(f.abono),0),
+    filas.reduce((s,f)=>s+fmtNum(f.glosa),0),
+    filas.reduce((s,f)=>s+fmtNum(f.reteFuente),0),
+    filas.reduce((s,f)=>s+fmtNum(f.afc),0),
+    filas.reduce((s,f)=>s+fmtNum(f.residentes),0),
+    filas.reduce((s,f)=>s+fmtNum(f.tiquetes),0),
+    filas.reduce((s,f)=>s+fmtNum(f.hotel),0),
+    filas.reduce((s,f)=>s+fmtNum(f.transporte),0),
+    filas.reduce((s,f)=>s+fmtNum(f.valorPagar),0),
+  ];
+
+  const wsData = [headers, ...rows, totales];
+  const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+  // Estilo de anchos de columna
+  ws['!cols'] = [
+    {wch:14},{wch:10},{wch:22},{wch:14},
+    {wch:12},{wch:12},{wch:13},{wch:10},{wch:12},
+    {wch:12},{wch:12},{wch:14},{wch:14}
+  ];
+
+  // Aplicar negrita al encabezado y totales via estilos si están disponibles
+  const range = XLSX.utils.decode_range(ws['!ref']);
+  // Encabezado (fila 0) — bold
+  for(let C=range.s.c; C<=range.e.c; C++){
+    const hCell = XLSX.utils.encode_cell({r:0,c:C});
+    if(!ws[hCell]) continue;
+    ws[hCell].s = {font:{bold:true}, fill:{fgColor:{rgb:'1A3A6B'}}, alignment:{horizontal:'center'}};
+  }
+  // Fila de totales — bold
+  const lastRow = wsData.length - 1;
+  for(let C=range.s.c; C<=range.e.c; C++){
+    const tCell = XLSX.utils.encode_cell({r:lastRow,c:C});
+    if(!ws[tCell]) continue;
+    ws[tCell].s = {font:{bold:true}, fill:{fgColor:{rgb:'EEF4FF'}}};
+  }
+
+  // Crear workbook
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, tabla.nombre.slice(0,31));
+
+  // Nombre del archivo dinámico
+  const nombreLimpio = tabla.nombre.replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ\s]/g,'').replace(/\s+/g,'_').toUpperCase();
+  const fecha = new Date().toISOString().slice(0,7); // YYYY-MM
+  const fileName = `${nombreLimpio}_${fecha}.xlsx`;
+
+  XLSX.writeFile(wb, fileName);
+  toast(`✅ Exportado: ${fileName}`,'success');
+};
+
+window.cl_openEnviarModal = (tablaId, idx) => {
+  const tabla = cl_tablasEgreso.find(t=>t.id===tablaId);
+  const fila  = tabla?.filas?.[idx];
+  if (!fila) { toast('No se encontró el registro.','error'); return; }
+
+  // Validar: información en la fila
+  if (!fila.nombre) {
+    toast('No es posible enviar el correo, falta información requerida (especialista).','error');
+    return;
+  }
+
+  // Buscar especialista en Clientes y su correo
+  const doctor = doctors.find(d => d.especialista === fila.nombre);
+  const correo = doctor?.correo?.trim() || '';
+
+  if (!correo) {
+    toast(`No es posible enviar: ${fila.nombre} no tiene correo registrado en Clientes.`,'error');
+    return;
+  }
+
+  cl__envContext = { tablaId, idx, fila, especialista: fila.nombre, correo, tablaNombre: tabla.nombre||'', mesLabel: mesFilaLabel(fila.mes) };
+
+  document.getElementById('envEspecialistaV2').textContent = fila.nombre;
+  document.getElementById('envCorreoV2').textContent = correo;
+
+  // Fecha de hoy como valor predeterminado
+  const hoy = new Date();
+  const fechaStr = hoy.toISOString().slice(0,10);
+  const nombreLimpio = fila.nombre.replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ\s]/g,'').replace(/\s+/g,'_');
+
+  document.getElementById('envAdjuntoV2').textContent = `Comprobante_Egreso_${nombreLimpio}_${fechaStr}.pdf`;
+  // Fecha del archivo — editable, predeterminada hoy
+  const fechaInput = document.getElementById('envFechaArchivoV2');
+  if (fechaInput) fechaInput.value = fechaStr;
+  // Selector de abono — predeterminado "No"
+  const abonoSel = document.getElementById('envEsAbonoV2');
+  if (abonoSel) abonoSel.value = 'no';
+
+  document.getElementById('envAsuntoV2').value = `Notificación de pago de honorarios profesionales — ${cl__envContext.mesLabel}`;
+  // Componer el mensaje con la fecha y el estado de abono actuales
+  cl_envActualizarMensaje();
+
+  document.getElementById('enviarModalV2').classList.add('open');
+};
+
+window.cl_envActualizarMensaje = () => {
+  if (!cl__envContext) return;
+  const fechaISO = document.getElementById('envFechaArchivoV2')?.value || new Date().toISOString().slice(0,10);
+  const fechaTxt = fechaLegibleLarga(fechaISO);
+  const esAbono  = document.getElementById('envEsAbonoV2')?.value === 'si';
+  const mesLabel = cl__envContext.mesLabel;
+  const nombre   = cl__envContext.especialista;
+
+  const parrafoPago = esAbono
+    ? `Nos permitimos informar que se ha realizado un abono correspondiente a sus honorarios profesionales del periodo ${mesLabel}, efectuado en la fecha ${fechaTxt}.`
+    : `Nos permitimos informar que el pago correspondiente a sus honorarios profesionales del periodo ${mesLabel} ha sido realizado exitosamente en la fecha ${fechaTxt}.`;
+
+  document.getElementById('envMensajeV2').value =
+`Estimado Dr. ${nombre}, cordial saludo.
+
+${parrafoPago}
+
+Adjunto remitimos el comprobante de egreso con la información correspondiente para su validación y control.
+
+Agradecemos su compromiso, profesionalismo y valioso apoyo en la prestación de servicios.`;
+};
+
+window.cl_envActualizarNombreAdjunto = () => {
+  if (!cl__envContext) return;
+  const fecha = document.getElementById('envFechaArchivoV2')?.value || new Date().toISOString().slice(0,10);
+  const nombreLimpio = cl__envContext.especialista.replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ\s]/g,'').replace(/\s+/g,'_');
+  document.getElementById('envAdjuntoV2').textContent = `Comprobante_Egreso_${nombreLimpio}_${fecha}.pdf`;
+  // La fecha también debe reflejarse en el mensaje (sincronización total)
+  cl_envActualizarMensaje();
+};
+
+function cl_generarAdjuntoFila(fila, tablaNombre, fechaEmisionISO) {
+  const { jsPDF } = window.jspdf || {};
+  if (!jsPDF) throw new Error('jsPDF no disponible. Recarga la página.');
+
+  const fmtV = v => '$ ' + (Number(v)||0).toLocaleString('es-CO');
+  const navy = [26, 58, 107];
+
+  const pdf = new jsPDF({ unit:'mm', format:'letter' });
+  const W = 216, M = 14;
+  let y = 16;
+
+  // ── Encabezado ──
+  // Logo UROEXPERTOS — esquina superior izquierda (título queda a la derecha)
+  try {
+    const logoW = 46, logoH = logoW / 3.05; // mantiene proporción
+    pdf.addImage(UROEXPERTOS_LOGO_B64, 'JPEG', M, 8, logoW, logoH);
+  } catch(e) { /* si falla el logo, el PDF sigue generándose */ }
+  pdf.setFont('courier','bold'); pdf.setFontSize(13); pdf.setTextColor(...navy);
+  pdf.text('COMPROBANTE DE EGRESO', W-M, y, {align:'right'});
+  y += 6;
+  pdf.setFontSize(9); pdf.setFont('courier','normal'); pdf.setTextColor(60);
+  // Fecha de Emisión: usa la fecha del formulario de envío (campo "Fecha del archivo adjunto").
+  // Si no se provee, usa la fecha de hoy. Se formatea "YYYY-MM-DD" → "DD/MM/YYYY".
+  const fechaEmisionTxt = fechaEmisionISO
+    ? fmtFechaLegible(fechaEmisionISO)
+    : new Date().toLocaleDateString('es-CO');
+  pdf.text(`Fecha de Emisión: ${fechaEmisionTxt}`, W-M, y, {align:'right'});
+  y += 4;
+  pdf.setDrawColor(...navy); pdf.setLineWidth(0.8);
+  pdf.line(M, y, W-M, y);
+  y += 8;
+
+  // Helper: section header bar
+  const secHead = (titulo) => {
+    pdf.setFillColor(...navy);
+    pdf.rect(M, y-4.5, W-2*M, 6.5, 'F');
+    pdf.setFont('courier','bold'); pdf.setFontSize(8.5); pdf.setTextColor(255);
+    pdf.text(titulo, M+2, y);
+    y += 7;
+  };
+  // Helper: field row
+  const fieldRow = (label, value, bold=false) => {
+    pdf.setFont('courier', 'normal'); pdf.setFontSize(8.5); pdf.setTextColor(40);
+    pdf.text(label, M+2, y);
+    pdf.setFont('courier', bold?'bold':'normal'); pdf.setTextColor(17);
+    pdf.text(String(value||'—'), M+58, y);
+    pdf.setDrawColor(190); pdf.setLineWidth(0.2);
+    pdf.line(M+56, y+1, W-M-2, y+1);
+    y += 6;
+  };
+  // Helper: money row (right aligned)
+  const moneyRow = (label, value) => {
+    pdf.setFont('courier','normal'); pdf.setFontSize(8.5); pdf.setTextColor(40);
+    pdf.text(label, M+2, y);
+    pdf.setTextColor(17);
+    pdf.text(fmtV(value), W-M-2, y, {align:'right'});
+    pdf.setDrawColor(220); pdf.setLineWidth(0.2);
+    pdf.line(M+2, y+1.5, W-M-2, y+1.5);
+    y += 6;
+  };
+
+  // ── Información del beneficiario ──
+  secHead('INFORMACIÓN DEL BENEFICIARIO');
+  fieldRow('Nombre:', fila.nombre, true);
+  y += 2;
+
+  // ── Información del servicio ──
+  secHead('INFORMACIÓN DEL SERVICIO');
+  fieldRow('IPS:', tablaNombre);
+  fieldRow('Mes del Servicio:', mesFilaLabel(fila.mes));
+  fieldRow('N. Factura:', fila.factura);
+  y += 2;
+
+  // ── Detalle financiero ──
+  secHead('DETALLE FINANCIERO');
+  moneyRow('VALOR FACTURA:', fila.valorFactura);
+  moneyRow('(-) ABONO', fila.abono);
+  moneyRow('(-) GLOSA', fila.glosa);
+  moneyRow('(-) RETE FUENTE', fila.reteFuente);
+  moneyRow('(-) AFC', fila.afc);
+  moneyRow('(-) RESIDENTES', fila.residentes);
+  moneyRow('(-) TIQUETES', fila.tiquetes);
+  moneyRow('(-) HOTEL', fila.hotel);
+  moneyRow('(-) TRANSPORTE', fila.transporte);
+
+  // ── Valor neto a pagar (barra azul) ──
+  y += 1;
+  pdf.setFillColor(...navy);
+  pdf.rect(M, y-4.5, W-2*M, 8, 'F');
+  pdf.setFont('courier','bold'); pdf.setFontSize(10); pdf.setTextColor(255);
+  pdf.text('VALOR NETO A PAGAR', M+2, y+0.5);
+  pdf.text(fmtV(fila.valorPagar), W-M-2, y+0.5, {align:'right'});
+  y += 14;
+
+  // ── Firmas ──
+  y = Math.max(y, 200);
+  const firmaW = (W-2*M-20)/3;
+  const firmas = [
+    ['Angela Paredes','APROBADO POR'],
+    ['Rosa Castellanos','REVISADO POR'],
+    ['Angela Paredes','AUTORIZÓ PAGO'],
+  ];
+  firmas.forEach((f,i) => {
+    const fx = M + i*(firmaW+10);
+    pdf.setFont('courier','normal'); pdf.setFontSize(8); pdf.setTextColor(17);
+    pdf.text(f[0], fx+firmaW/2, y, {align:'center'});
+    pdf.setDrawColor(50); pdf.setLineWidth(0.4);
+    pdf.line(fx, y+1.5, fx+firmaW, y+1.5);
+    pdf.setFontSize(7); pdf.setTextColor(90); pdf.setFont('courier','bold');
+    pdf.text(f[1], fx+firmaW/2, y+5.5, {align:'center'});
+  });
+
+  // Footer
+  pdf.setFont('courier','normal'); pdf.setFontSize(7); pdf.setTextColor(150);
+  pdf.text('Documento generado automáticamente — Sistema BOE UroExpertos', W/2, 268, {align:'center'});
+
+  // Return base64 (without the data: prefix)
+  return pdf.output('datauristring').split(',')[1];
+}
+
+window.cl_enviarCorreoFila = async () => {
+  if (!cl__envContext) return;
+  const { fila, especialista, correo, tablaNombre } = cl__envContext;
+
+  const asunto  = document.getElementById('envAsuntoV2').value.trim();
+  const mensaje = document.getElementById('envMensajeV2').value.trim();
+  if (!asunto) { toast('El asunto es obligatorio.','error'); return; }
+
+  const btn = document.getElementById('btnEnviarCorreoV2');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Enviando...';
+
+  try {
+    // Fecha del formulario: única fuente para el nombre del archivo Y la Fecha de Emisión del PDF
+    const fechaStr = document.getElementById('envFechaArchivoV2')?.value || new Date().toISOString().slice(0,10);
+    // Generar adjunto usando esa misma fecha como Fecha de Emisión
+    const base64 = cl_generarAdjuntoFila(fila, tablaNombre, fechaStr);
+    const nombreLimpio = especialista.replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ\s]/g,'').replace(/\s+/g,'_');
+    const attachmentName = `Comprobante_Egreso_${nombreLimpio}_${fechaStr}.pdf`;
+
+    // Llamar a la función serverless
+    const resp = await fetch('/api/send-email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        to: correo,
+        subject: asunto,
+        message: mensaje,
+        attachmentBase64: base64,
+        attachmentName,
+      }),
+    });
+
+    const data = await resp.json();
+    if (!resp.ok || !data.ok) throw new Error(data.error || 'Error desconocido');
+
+    // Marcar la fila como enviada en Firestore (botón pasa a verde)
+    try {
+      const { tablaId, idx } = cl__envContext;
+      const tabla = cl_tablasEgreso.find(t=>t.id===tablaId);
+      if (tabla) {
+        const filas = [...(tabla.filas||[])];
+        if (filas[idx]) {
+          filas[idx] = { ...filas[idx], correoEnviado: true, correoFecha: new Date().toISOString() };
+          await updateDoc(doc(db,'tablasEgreso_v2',tablaId), { filas, updatedAt: serverTimestamp() });
+        }
+      }
+    } catch(e2) { console.warn('No se pudo marcar fila como enviada:', e2); }
+
+    toast('Correo enviado correctamente al especialista.','success');
+    closeEnviarModal();
+  } catch(e) {
+    toast('Error al enviar correo, validar configuración o datos. ('+e.message+')','error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fa-solid fa-paper-plane"></i> Enviar correo';
+  }
+};
+
+/* ── Suscripción Firestore UROEXPERTOS 2 (colecciones _v2, empiezan vacías) ── */
+let _cl_subscrito = false;
+function cl_subscribeEgresos() {
+  if (_cl_subscrito) return;
+  _cl_subscrito = true;
+  onSnapshot(collection(db,'egresos_v2'), snap => {
+    cl_egresos = snap.docs.map(d=>({id:d.id,...d.data()}));
+    if(document.getElementById('view-uroexpertos2')?.classList.contains('active')){
+      cl_renderEgresoTable(); cl_renderCustomTables();
+    }
+  });
+  onSnapshot(collection(db,'tablasEgreso_v2'), snap => {
+    const prev = cl_tablasEgreso;
+    cl_tablasEgreso = snap.docs.map(d=>{
+      const ex = prev.find(t=>t.id===d.id);
+      return { id:d.id,...d.data(),
+        _selectedIdent: ex?._selectedIdent||'', _selectedIdents: ex?._selectedIdents||[],
+        _chkContabilidad: d.data().chkContabilidad||false, _chkFacturacion: d.data().chkFacturacion||false };
+    });
+    if(document.getElementById('view-uroexpertos2')?.classList.contains('active')){
+      cl_renderCustomTables();
+    }
+  });
+}
+
+
 /* ── Suscripción Firestore ── */
 function subscribeTurnos() {
   onSnapshot(collection(db,'turnos'), snap => {
@@ -7659,4 +9324,3 @@ window.extEliminarPlantilla = async () => {
     extCargarListaPlantillas();
   } catch(e) { toast('Error: '+e.message,'error'); }
 };
-
