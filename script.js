@@ -6004,16 +6004,13 @@ window.openEnviarModal = (tablaId, idx) => {
     return;
   }
 
-  _envContext = { tablaId, idx, fila, especialista: fila.nombre, correo, tablaNombre: tabla.nombre||'' };
+  _envContext = { tablaId, idx, fila, especialista: fila.nombre, correo, tablaNombre: tabla.nombre||'', mesLabel: mesFilaLabel(fila.mes) };
 
   document.getElementById('envEspecialista').textContent = fila.nombre;
   document.getElementById('envCorreo').textContent = correo;
 
-  // Mes dinámico desde la fila (formato "2026-03" → "Marzo de 2026")
-  const mesLabel = mesFilaLabel(fila.mes);
-  // Fecha actual en formato legible
+  // Fecha de hoy como valor predeterminado
   const hoy = new Date();
-  const fechaLegible = hoy.toLocaleDateString('es-CO', {day:'numeric', month:'long', year:'numeric'});
   const fechaStr = hoy.toISOString().slice(0,10);
   const nombreLimpio = fila.nombre.replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ\s]/g,'').replace(/\s+/g,'_');
 
@@ -6021,25 +6018,57 @@ window.openEnviarModal = (tablaId, idx) => {
   // Fecha del archivo — editable, predeterminada hoy
   const fechaInput = document.getElementById('envFechaArchivo');
   if (fechaInput) fechaInput.value = fechaStr;
-  document.getElementById('envAsunto').value = `Notificación de pago de honorarios profesionales — ${mesLabel}`;
-  document.getElementById('envMensaje').value =
-`Estimado Dr. ${fila.nombre}, cordial saludo.
+  // Selector de abono — predeterminado "No"
+  const abonoSel = document.getElementById('envEsAbono');
+  if (abonoSel) abonoSel.value = 'no';
 
-Nos permitimos informar que el pago correspondiente a sus honorarios profesionales del periodo ${mesLabel} ha sido realizado exitosamente en la fecha ${fechaLegible}.
-
-Adjunto remitimos el comprobante de egreso con la información correspondiente para su validación y control.
-
-Agradecemos su compromiso, profesionalismo y valioso apoyo en la prestación de servicios.`;
+  document.getElementById('envAsunto').value = `Notificación de pago de honorarios profesionales — ${_envContext.mesLabel}`;
+  // Componer el mensaje con la fecha y el estado de abono actuales
+  envActualizarMensaje();
 
   document.getElementById('enviarModal').classList.add('open');
 };
 
-/* Actualiza el nombre del adjunto mostrado cuando cambia la fecha */
+/* Fecha ISO "2026-08-20" → texto legible "20 de agosto de 2026" */
+function fechaLegibleLarga(iso){
+  if (!iso) return '';
+  const d = new Date(iso + 'T12:00:00');
+  if (isNaN(d)) return iso;
+  return d.toLocaleDateString('es-CO', {day:'numeric', month:'long', year:'numeric'});
+}
+
+/* Compone el cuerpo del mensaje según la fecha del adjunto y si es abono.
+   Se llama al abrir el modal y cada vez que cambia la fecha o el selector de abono. */
+window.envActualizarMensaje = () => {
+  if (!_envContext) return;
+  const fechaISO = document.getElementById('envFechaArchivo')?.value || new Date().toISOString().slice(0,10);
+  const fechaTxt = fechaLegibleLarga(fechaISO);
+  const esAbono  = document.getElementById('envEsAbono')?.value === 'si';
+  const mesLabel = _envContext.mesLabel;
+  const nombre   = _envContext.especialista;
+
+  const parrafoPago = esAbono
+    ? `Nos permitimos informar que se ha realizado un abono correspondiente a sus honorarios profesionales del periodo ${mesLabel}, efectuado en la fecha ${fechaTxt}.`
+    : `Nos permitimos informar que el pago correspondiente a sus honorarios profesionales del periodo ${mesLabel} ha sido realizado exitosamente en la fecha ${fechaTxt}.`;
+
+  document.getElementById('envMensaje').value =
+`Estimado Dr. ${nombre}, cordial saludo.
+
+${parrafoPago}
+
+Adjunto remitimos el comprobante de egreso con la información correspondiente para su validación y control.
+
+Agradecemos su compromiso, profesionalismo y valioso apoyo en la prestación de servicios.`;
+};
+
+/* Actualiza el nombre del adjunto Y el mensaje cuando cambia la fecha */
 window.envActualizarNombreAdjunto = () => {
   if (!_envContext) return;
   const fecha = document.getElementById('envFechaArchivo')?.value || new Date().toISOString().slice(0,10);
   const nombreLimpio = _envContext.especialista.replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ\s]/g,'').replace(/\s+/g,'_');
   document.getElementById('envAdjunto').textContent = `Comprobante_Egreso_${nombreLimpio}_${fecha}.pdf`;
+  // La fecha también debe reflejarse en el mensaje (sincronización total)
+  envActualizarMensaje();
 };
 
 /* Convertir "2026-03" a "Marzo de 2026" */

@@ -1234,8 +1234,15 @@
         <div style="display:flex;gap:8px"><strong style="min-width:90px;color:var(--navy)">Adjunto:</strong><span id="envAdjunto" style="color:#2e7d32">—</span></div>
       </div>
       <div class="fg" style="margin-bottom:12px">
-        <label>Fecha del archivo adjunto <span style="font-size:10px;color:var(--gray-3);font-weight:400">(se usa en el nombre del PDF)</span></label>
+        <label>Fecha del archivo adjunto <span style="font-size:10px;color:var(--gray-3);font-weight:400">(nombre del PDF, emisión y mensaje)</span></label>
         <input type="date" id="envFechaArchivo" onchange="envActualizarNombreAdjunto()"/>
+      </div>
+      <div class="fg" style="margin-bottom:12px">
+        <label>¿Es un abono?</label>
+        <select id="envEsAbono" onchange="envActualizarMensaje()" style="border:1.5px solid var(--gray-1);border-radius:8px;padding:9px 11px;font-size:13px;outline:none;font-family:'Nunito',sans-serif;background:white;color:var(--navy);font-weight:600;cursor:pointer;width:100%">
+          <option value="no">No — pago total de honorarios</option>
+          <option value="si">Sí — es un abono</option>
+        </select>
       </div>
       <div class="fg" style="margin-bottom:12px">
         <label>Asunto</label>
