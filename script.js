@@ -274,6 +274,8 @@ const MODULOS_CATALOGO = {
 let menuGrupos = [];          // [{ id, nombre, modulos:[claves], colapsado }]
 const menuGruposColapsado = {};
 
+
+
 /* Cargar grupos guardados */
 async function cargarMenuGrupos(){
   try {
@@ -3597,8 +3599,8 @@ window.clearProcesoLogo = () => {
    EGRESOS — Facturas madre/hija + Tablas personalizadas
 ══════════════════════════════════════════════════ */
 
-let egresos       = [];   // facturas madre con hijas
-let tablasEgreso  = [];   // tablas personalizadas [{id, nombre, filas:[]}]
+let egresos       = [];   // facturas madre con hijas (vista activa)
+let tablasEgreso  = [];   // tablas personalizadas (vista activa)
 let localHijas    = [];   // hijas en modal activo
 let editEgresoId  = null;
 let editTablaRowTablaId = null;
@@ -4952,7 +4954,7 @@ window.imprimirComprobante = () => {
    CUADRO DE TURNOS
 ══════════════════════════════════════════════════ */
 
-let turnos = [];
+let turnos = [];      // turnos de la vista activa
 let turnosCurrentDate = new Date();
 let editTurnoId = null;
 
@@ -7657,3 +7659,4 @@ window.extEliminarPlantilla = async () => {
     extCargarListaPlantillas();
   } catch(e) { toast('Error: '+e.message,'error'); }
 };
+
