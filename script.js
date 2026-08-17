@@ -420,6 +420,7 @@ window.menuGrupoDragOver  = (e) => { e.preventDefault(); };
 window.menuGrupoDrop = (e) => {
   e.preventDefault();
   const destino = e.currentTarget;
+  // Reordenar grupos
   const to = +destino.dataset.gi;
   if (_dragGrupo===null || _dragGrupo===to) return;
   const [g] = menuGrupos.splice(_dragGrupo,1);
@@ -428,6 +429,7 @@ window.menuGrupoDrop = (e) => {
   renderMenuGrupos();
 };
 window.menuGrupoDragEnd = (e) => { e.currentTarget.classList.remove('dragging'); _dragGrupo=null; };
+
 
 /* Reenviar datos al iframe de Reportes cada vez que se entra a la vista
    (el iframe puede haber enviado IFRAME_READY antes de que los datos
@@ -3592,7 +3594,6 @@ function subscribeEgresos() {
   onSnapshot(collection(db,'egresos'), snap => {
     egresos = snap.docs.map(d=>({id:d.id,...d.data()}));
     renderEgresoTable();
-    // Also refresh custom tables so identificador dropdowns update in real time
     renderCustomTables();
   });
   onSnapshot(collection(db,'tablasEgreso'), snap => {
