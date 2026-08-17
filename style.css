@@ -2802,3 +2802,38 @@ input,select,textarea{font-family:inherit;font-size:14px;}
 /* Grupo fuera del alcance de la búsqueda (carpeta cerrada mientras se busca) */
 .tbl-group-row.grupo-fuera-busqueda { opacity:.5; }
 .tbl-group-row.grupo-fuera-busqueda .tbl-group-count::after { content:" · fuera de búsqueda"; font-weight:600; }
+
+/* ══ GRUPOS DE MENÚ PERSONALIZADOS ══ */
+.menu-grupo { margin-bottom:2px; }
+.menu-grupo-head {
+  display:flex; align-items:center; gap:4px; padding:7px 14px;
+  color:var(--navy); font-weight:700; font-size:12.5px; cursor:grab;
+  border-radius:7px; transition:background .15s;
+}
+.menu-grupo-head:hover { background:var(--gray-0); }
+.menu-grupo-head.dragging { opacity:.5; }
+.menu-grupo-chevron { font-size:9px; color:var(--blue); transition:transform .2s; }
+.menu-grupo.colapsado .menu-grupo-chevron { transform:rotate(-90deg); }
+.menu-grupo-folder { font-size:12px; color:var(--blue); }
+.menu-grupo-nombre { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.menu-grupo-btn {
+  background:none; border:none; cursor:pointer; color:var(--gray-3);
+  font-size:10px; padding:3px 4px; border-radius:4px; opacity:0; transition:opacity .15s,color .15s;
+}
+.menu-grupo-head:hover .menu-grupo-btn { opacity:1; }
+.menu-grupo-btn:hover { color:var(--blue); background:var(--blue-pale); }
+.menu-grupo-btn.del:hover { color:var(--red); background:var(--red-pale); }
+.menu-grupo-items { overflow:hidden; transition:max-height .2s; padding-left:12px; }
+.menu-grupo.colapsado .menu-grupo-items { max-height:0 !important; }
+.nav-item-grupo { cursor:grab; }
+.nav-item-grupo.dragging { opacity:.5; }
+.nav-item-grupo[draggable="true"]:active { cursor:grabbing; }
+
+/* Checkboxes de módulos en el modal */
+.menu-mod-check {
+  display:flex; align-items:center; gap:8px; padding:7px 9px; border-radius:6px;
+  cursor:pointer; font-size:12.5px; color:var(--navy); font-weight:600; transition:background .12s;
+}
+.menu-mod-check:hover { background:var(--gray-0); }
+.menu-mod-check input { width:15px; height:15px; accent-color:var(--blue); cursor:pointer; }
+.menu-mod-check i { color:var(--blue); width:16px; text-align:center; }

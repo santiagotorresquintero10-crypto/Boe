@@ -94,7 +94,13 @@
       </div>
     </div>
     <nav class="sidebar-nav">
-      <span class="nav-group-label">Principal</span>
+      <!-- Grupos de menú personalizados (carpetas) — se renderizan dinámicamente -->
+      <div id="menuGruposContainer"></div>
+      <div id="menuGruposDivider" style="display:none;height:1px;background:var(--gray-1);margin:8px 14px"></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:0 14px">
+        <span class="nav-group-label" style="padding:0">Principal</span>
+        <button onclick="openMenuGrupoModal()" title="Crear grupo de menú" style="background:none;border:none;color:var(--blue);cursor:pointer;font-size:12px;padding:4px"><i class="fa-solid fa-folder-plus"></i></button>
+      </div>
       <a class="nav-item active" onclick="navigate('dashboard',this)"><i class="fa-solid fa-gauge-high"></i><span>Dashboard</span></a>
       <a class="nav-item" onclick="navigate('doctores',this)"><i class="fa-solid fa-briefcase"></i><span>Clientes</span><span class="nav-badge" id="navBadgeDoctores">0</span></a>
       <span class="nav-group-label">Gestión</span>
@@ -739,6 +745,47 @@
 </div>
 
 <!-- MODAL: DOCTOR -->
+<div class="modal-overlay" id="menuGrupoModal">
+  <div class="modal" style="max-width:460px">
+    <div class="modal-head"><h3 id="menuGrupoTitle"><i class="fa-solid fa-folder-plus" style="color:var(--blue);margin-right:8px"></i>Nuevo grupo de menú</h3><button class="modal-x" onclick="closeMenuGrupoModal()"><i class="fa-solid fa-xmark"></i></button></div>
+    <div class="modal-body">
+      <div class="fg" style="margin-bottom:14px">
+        <label>Nombre del grupo</label>
+        <input type="text" id="menuGrupoNombre" placeholder="Ej: UROEXPERTOS" style="border:1.5px solid var(--gray-1);border-radius:8px;padding:9px 11px;font-size:13px;outline:none;font-family:'Nunito',sans-serif;width:100%"/>
+      </div>
+      <div class="fg">
+        <label>Módulos a incluir <span style="font-size:10px;color:var(--gray-3);font-weight:400">(el orden se ajusta luego arrastrando en el menú)</span></label>
+        <div id="menuGrupoModulos" style="display:flex;flex-direction:column;gap:4px;max-height:280px;overflow-y:auto;margin-top:6px;border:1px solid var(--gray-1);border-radius:8px;padding:8px"></div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeMenuGrupoModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="guardarMenuGrupo()"><i class="fa-solid fa-floppy-disk"></i> Guardar</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="moverGrupoModal">
+  <div class="modal" style="max-width:440px">
+    <div class="modal-head"><h3><i class="fa-solid fa-folder" style="color:var(--blue);margin-right:8px"></i>Mover a grupo</h3><button class="modal-x" onclick="closeMoverGrupoModal()"><i class="fa-solid fa-xmark"></i></button></div>
+    <div class="modal-body">
+      <p style="color:var(--gray-4);font-size:13px;margin:0 0 14px">Cliente: <strong id="moverClienteNombre" style="color:var(--navy)"></strong></p>
+      <div class="fg" style="margin-bottom:12px">
+        <label>Grupo existente</label>
+        <select id="moverGrupoSelect" style="border:1.5px solid var(--gray-1);border-radius:8px;padding:9px 11px;font-size:13px;outline:none;font-family:'Nunito',sans-serif;background:white;color:var(--navy);font-weight:600;cursor:pointer;width:100%"></select>
+      </div>
+      <div class="fg">
+        <label>O crear grupo nuevo <span style="font-size:10px;color:var(--gray-3);font-weight:400">(tiene prioridad si lo llenas)</span></label>
+        <input type="text" id="moverGrupoNuevo" placeholder="Ej: Clientes Back Office" style="border:1.5px solid var(--gray-1);border-radius:8px;padding:9px 11px;font-size:13px;outline:none;font-family:'Nunito',sans-serif;width:100%"/>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeMoverGrupoModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="guardarMoverGrupo()"><i class="fa-solid fa-floppy-disk"></i> Guardar</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="doctorModal">
   <div class="modal modal-xl">
     <div class="modal-head"><h3 id="modalDoctorTitle">Nuevo Cliente</h3><button class="modal-x" onclick="closeDoctorModal()"><i class="fa-solid fa-xmark"></i></button></div>

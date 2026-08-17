@@ -182,7 +182,16 @@ function bootApp(){
 }
 
 /* ── SUBSCRIPTIONS ── */
+let _cliGrupoCargado = false;
 function subscribeAll(){
+  // Cargar estado de grupos de clientes una sola vez
+  if (!_cliGrupoCargado) {
+    _cliGrupoCargado = true;
+    getDoc(doc(db,'uiPrefs','clienteGrupos')).then(s=>{
+      if (s.exists()) { const c=s.data()?.colapsados||{}; Object.keys(c).forEach(k=>clienteGrupoColapsado[k]=true); filterDoctors(); }
+    }).catch(()=>{});
+    cargarMenuGrupos();
+  }
   onSnapshot(query(collection(db,'doctors'),orderBy('createdAt','desc')),snap=>{
     doctors=snap.docs.map(d=>({id:d.id,...d.data()}));
     filterDoctors(); renderKanban(); renderDashboard(); updateNavBadges(); updateSelects();
@@ -238,6 +247,187 @@ window.navigate = (view,el) => {
   if(view==='extraccion') extCargarListaPlantillas();
   if(view==='reportes') reenviarDatosReportes();
 };
+
+/* ═══════════════════════════════════════════════════════════════
+   GRUPOS DE MENÚ PERSONALIZADOS (Fase 1 — organización visual)
+   Los módulos NO se copian: cada grupo referencia módulos existentes
+   por su clave de vista. Se guardan en Firestore (uiPrefs/menuGrupos).
+═══════════════════════════════════════════════════════════════ */
+
+/* Catálogo de módulos disponibles (clave de vista → etiqueta + ícono) */
+const MODULOS_CATALOGO = {
+  dashboard:  { label:'Dashboard',           icon:'fa-gauge-high' },
+  doctores:   { label:'Clientes',            icon:'fa-briefcase' },
+  kanban:     { label:'Tablero Kanban',      icon:'fa-table-columns' },
+  calendario: { label:'Calendario',          icon:'fa-calendar-days' },
+  tareas:     { label:'Tareas',              icon:'fa-list-check' },
+  chat:       { label:'Chat del equipo',     icon:'fa-comments' },
+  equipo:     { label:'Equipo',              icon:'fa-users' },
+  alertas:    { label:'Alertas',             icon:'fa-bell' },
+  resumen:    { label:'Resumen Procesos',    icon:'fa-chart-pie' },
+  egresos:    { label:'UROEXPERTOS',         icon:'fa-file-invoice-dollar' },
+  turnos:     { label:'Cuadro de Turnos',    icon:'fa-calendar-days' },
+  reportes:   { label:'Reportes',            icon:'fa-chart-bar' },
+  extraccion: { label:'Extracción de Datos', icon:'fa-file-export' },
+};
+
+let menuGrupos = [];          // [{ id, nombre, modulos:[claves], colapsado }]
+const menuGruposColapsado = {};
+
+/* Cargar grupos guardados */
+async function cargarMenuGrupos(){
+  try {
+    const snap = await getDoc(doc(db,'uiPrefs','menuGrupos'));
+    menuGrupos = snap.exists() ? (snap.data()?.grupos || []) : [];
+  } catch(e){ menuGrupos = []; }
+  renderMenuGrupos();
+}
+
+/* Persistir grupos */
+function guardarMenuGrupos(){
+  setDoc(doc(db,'uiPrefs','menuGrupos'), { grupos: menuGrupos, updatedAt: serverTimestamp() })
+    .catch(e=>console.warn('No se pudo guardar grupos de menú:', e));
+}
+
+/* Render de los grupos-carpeta en el menú */
+function renderMenuGrupos(){
+  const cont = document.getElementById('menuGruposContainer');
+  const div  = document.getElementById('menuGruposDivider');
+  if (!cont) return;
+  if (!menuGrupos.length){ cont.innerHTML=''; if(div) div.style.display='none'; return; }
+  if (div) div.style.display='block';
+
+  cont.innerHTML = menuGrupos.map((g, gi)=>{
+    const colap = menuGruposColapsado[g.id];
+    const items = (g.modulos||[]).map((clave, mi)=>{
+      const mod = MODULOS_CATALOGO[clave];
+      if (!mod) return '';
+      return `<a class="nav-item nav-item-grupo" draggable="true"
+        data-grupo="${g.id}" data-modulo="${clave}" data-mi="${mi}"
+        ondragstart="menuModDragStart(event)" ondragover="menuModDragOver(event)" ondrop="menuModDrop(event)" ondragend="menuModDragEnd(event)"
+        onclick="navigate('${clave}',this)">
+        <i class="fa-solid ${mod.icon}"></i><span>${escHtml(mod.label)}</span></a>`;
+    }).join('');
+    return `<div class="menu-grupo ${colap?'colapsado':''}" data-gid="${g.id}">
+      <div class="menu-grupo-head" draggable="true"
+        data-gi="${gi}" data-gid="${g.id}"
+        ondragstart="menuGrupoDragStart(event)" ondragover="menuGrupoDragOver(event)" ondrop="menuGrupoDrop(event)" ondragend="menuGrupoDragEnd(event)">
+        <span onclick="toggleMenuGrupo('${g.id}')" style="display:flex;align-items:center;gap:8px;flex:1;cursor:pointer">
+          <i class="fa-solid fa-chevron-down menu-grupo-chevron"></i>
+          <i class="fa-solid fa-folder menu-grupo-folder"></i>
+          <span class="menu-grupo-nombre">${escHtml(g.nombre)}</span>
+        </span>
+        <button onclick="event.stopPropagation();openMenuGrupoModal('${g.id}')" title="Editar" class="menu-grupo-btn"><i class="fa-solid fa-pen"></i></button>
+        <button onclick="event.stopPropagation();replicarMenuGrupo('${g.id}')" title="Replicar grupo" class="menu-grupo-btn"><i class="fa-solid fa-copy"></i></button>
+        <button onclick="event.stopPropagation();eliminarMenuGrupo('${g.id}')" title="Eliminar" class="menu-grupo-btn del"><i class="fa-solid fa-trash"></i></button>
+      </div>
+      <div class="menu-grupo-items">${items}</div>
+    </div>`;
+  }).join('');
+}
+
+window.toggleMenuGrupo = (gid) => {
+  menuGruposColapsado[gid] = !menuGruposColapsado[gid];
+  const el = document.querySelector(`.menu-grupo[data-gid="${gid}"]`);
+  if (el) el.classList.toggle('colapsado', menuGruposColapsado[gid]);
+};
+
+/* ── Modal crear/editar grupo ── */
+let _editMenuGrupoId = null;
+window.openMenuGrupoModal = (gid=null) => {
+  _editMenuGrupoId = gid;
+  const g = gid ? menuGrupos.find(x=>x.id===gid) : null;
+  document.getElementById('menuGrupoTitle').textContent = g ? 'Editar grupo' : 'Nuevo grupo de menú';
+  document.getElementById('menuGrupoNombre').value = g?.nombre || '';
+  // Render de checkboxes de módulos, en orden si edita
+  const seleccionados = g?.modulos || [];
+  const orden = [...seleccionados, ...Object.keys(MODULOS_CATALOGO).filter(k=>!seleccionados.includes(k))];
+  document.getElementById('menuGrupoModulos').innerHTML = orden.map(clave=>{
+    const mod = MODULOS_CATALOGO[clave];
+    const chk = seleccionados.includes(clave) ? 'checked' : '';
+    return `<label class="menu-mod-check">
+      <input type="checkbox" value="${clave}" ${chk}/>
+      <i class="fa-solid ${mod.icon}"></i> ${escHtml(mod.label)}
+    </label>`;
+  }).join('');
+  document.getElementById('menuGrupoModal').classList.add('open');
+};
+window.closeMenuGrupoModal = () => { document.getElementById('menuGrupoModal').classList.remove('open'); _editMenuGrupoId=null; };
+
+window.guardarMenuGrupo = () => {
+  const nombre = document.getElementById('menuGrupoNombre').value.trim();
+  if (!nombre) { toast('Ponle un nombre al grupo.','error'); return; }
+  const modulos = [...document.querySelectorAll('#menuGrupoModulos input:checked')].map(c=>c.value);
+  if (!modulos.length) { toast('Selecciona al menos un módulo.','error'); return; }
+
+  if (_editMenuGrupoId){
+    const g = menuGrupos.find(x=>x.id===_editMenuGrupoId);
+    if (g){ g.nombre = nombre; g.modulos = modulos; }
+  } else {
+    menuGrupos.push({ id:'mg'+Date.now().toString(36), nombre, modulos });
+  }
+  guardarMenuGrupos();
+  renderMenuGrupos();
+  closeMenuGrupoModal();
+  toast('Grupo guardado.','success');
+};
+
+window.eliminarMenuGrupo = (gid) => {
+  if (!confirm('¿Eliminar este grupo del menú? Los módulos NO se eliminan, solo la carpeta.')) return;
+  menuGrupos = menuGrupos.filter(g=>g.id!==gid);
+  guardarMenuGrupos();
+  renderMenuGrupos();
+  toast('Grupo eliminado.','success');
+};
+
+/* Replicar un grupo del menú (solo estructura visual; los datos NO se tocan) */
+window.replicarMenuGrupo = (gid) => {
+  const g = menuGrupos.find(x=>x.id===gid);
+  if (!g) return;
+  const nombre = prompt('Nombre de la nueva sesión (grupo):', g.nombre + ' (copia)');
+  if (nombre === null) return;
+  const nom = nombre.trim();
+  if (!nom) { toast('Nombre vacío.','error'); return; }
+  menuGrupos.push({ id:'mg'+Date.now().toString(36), nombre:nom, modulos:[...g.modulos] });
+  guardarMenuGrupos();
+  renderMenuGrupos();
+  toast(`Grupo "${nom}" creado con la misma estructura.`,'success');
+};
+
+/* ── Drag & drop de MÓDULOS dentro de un grupo ── */
+let _dragMod = null;
+window.menuModDragStart = (e) => { _dragMod = { grupo:e.target.dataset.grupo, mi:+e.target.dataset.mi }; e.target.classList.add('dragging'); e.stopPropagation(); };
+window.menuModDragOver  = (e) => { e.preventDefault(); };
+window.menuModDrop = (e) => {
+  e.preventDefault(); e.stopPropagation();
+  const destino = e.target.closest('.nav-item-grupo');
+  if (!destino || !_dragMod) return;
+  const g = menuGrupos.find(x=>x.id===_dragMod.grupo);
+  if (!g || destino.dataset.grupo !== _dragMod.grupo) return;  // solo dentro del mismo grupo
+  const from = _dragMod.mi, to = +destino.dataset.mi;
+  if (from===to) return;
+  const [m] = g.modulos.splice(from,1);
+  g.modulos.splice(to,0,m);
+  guardarMenuGrupos();
+  renderMenuGrupos();
+};
+window.menuModDragEnd = (e) => { e.target.classList.remove('dragging'); _dragMod=null; };
+
+/* ── Drag & drop de GRUPOS (reordenar sesiones) ── */
+let _dragGrupo = null;
+window.menuGrupoDragStart = (e) => { _dragGrupo = +e.currentTarget.dataset.gi; e.currentTarget.classList.add('dragging'); };
+window.menuGrupoDragOver  = (e) => { e.preventDefault(); };
+window.menuGrupoDrop = (e) => {
+  e.preventDefault();
+  const destino = e.currentTarget;
+  const to = +destino.dataset.gi;
+  if (_dragGrupo===null || _dragGrupo===to) return;
+  const [g] = menuGrupos.splice(_dragGrupo,1);
+  menuGrupos.splice(to,0,g);
+  guardarMenuGrupos();
+  renderMenuGrupos();
+};
+window.menuGrupoDragEnd = (e) => { e.currentTarget.classList.remove('dragging'); _dragGrupo=null; };
 
 /* Reenviar datos al iframe de Reportes cada vez que se entra a la vista
    (el iframe puede haber enviado IFRAME_READY antes de que los datos
@@ -324,20 +514,111 @@ window.filterDoctors = () => {
   const tbody=document.getElementById('doctorsBody'), empty=document.getElementById('emptyDoctors'), table=document.getElementById('doctorsTable');
   if(!list.length){tbody.innerHTML='';empty.style.display='block';table.style.display='none';return;}
   empty.style.display='none';table.style.display='table';
-  tbody.innerHTML=list.map(d=>{
+
+  const filaCliente = (d) => {
     const accCount=d.accesos?.length||0;
     const logoCell = d.logoBase64
       ? `<div class="doc-av has-logo"><img src="${d.logoBase64}" alt="logo"/></div>`
       : `<div class="doc-av" style="background:${avatarColor(d.nombre)}">${initials(d.nombre)}</div>`;
-    return `<tr>
+    return `<tr data-cli-group="${escHtml(d.grupo||'')}">
     <td><div class="doc-cell">${logoCell}<div><div class="doc-name">${d.nombre}</div><div style="font-size:11px;color:var(--gray-3)">${[d.especialista,d.nit].filter(Boolean).join(' · ')}</div></div></div></td>
     <td>${d.especialidad||'—'}</td><td>${d.entidad||'—'}</td>
     <td>${d.correo?`<a href="mailto:${d.correo}" style="color:var(--blue)">${d.correo}</a>`:'—'}</td>
     <td>${d.telefono||'—'}</td><td style="font-size:12px;color:var(--gray-4)">${d.contrato||'—'}</td>
     <td><span class="badge badge-${d.estado==='Activo'?'active':'inactive'}">${d.estado||'—'}</span></td>
     <td>${accCount>0?`<span class="accesos-badge"><i class="fa-solid fa-key"></i> ${accCount} acceso${accCount>1?'s':''}</span>`:'<span style="color:var(--gray-2);font-size:12px">—</span>'}</td>
-    <td><div class="tbl-actions"><button class="act-btn edit" onclick="openDoctorModal('${d.id}')"><i class="fa-solid fa-pen"></i></button><button class="act-btn del" onclick="deleteDoctor('${d.id}')"><i class="fa-solid fa-trash"></i></button></div></td>
-  </tr>`;}).join('');
+    <td><div class="tbl-actions"><button class="act-btn" title="Mover a grupo" style="background:var(--blue-pale);color:var(--blue)" onclick="openMoverClienteGrupo('${d.id}')"><i class="fa-solid fa-folder"></i></button><button class="act-btn edit" onclick="openDoctorModal('${d.id}')"><i class="fa-solid fa-pen"></i></button><button class="act-btn del" onclick="deleteDoctor('${d.id}')"><i class="fa-solid fa-trash"></i></button></div></td>
+  </tr>`;
+  };
+
+  // Si hay búsqueda activa, mostrar lista plana (búsqueda independiente del grupo)
+  if (q) {
+    tbody.innerHTML = list.map(filaCliente).join('');
+    return;
+  }
+
+  // ── Agrupar clientes por su campo "grupo" ──
+  const mapa = new Map();
+  list.forEach(d => {
+    const g = (d.grupo||'').trim() || '__singrupo__';
+    if (!mapa.has(g)) mapa.set(g, []);
+    mapa.get(g).push(d);
+  });
+  // Orden: grupos alfabéticos primero, "Sin grupo" al final
+  const claves = [...mapa.keys()].sort((a,b)=>{
+    if (a==='__singrupo__') return 1;
+    if (b==='__singrupo__') return -1;
+    return a.localeCompare(b,'es');
+  });
+
+  tbody.innerHTML = claves.map(clave => {
+    const grupoNom = clave==='__singrupo__' ? 'Sin grupo' : clave;
+    const items = mapa.get(clave);
+    const colapsado = clienteGrupoColapsado[clave] ? 'colapsado' : '';
+    const cab = `<tr class="tbl-group-row cli-group-row ${colapsado}" data-cligroup="${escHtml(clave)}" onclick="toggleClienteGrupo('${escHtml(clave)}',this)">
+      <td colspan="8" class="tbl-group-cell">
+        <i class="fa-solid fa-chevron-down tbl-group-chevron"></i>
+        <i class="fa-solid fa-folder-open tbl-group-folder"></i>
+        <span class="tbl-group-label">${escHtml(grupoNom)}</span>
+        <span class="tbl-group-count">${items.length} cliente${items.length!==1?'s':''}</span>
+      </td>
+      <td></td>
+    </tr>`;
+    const filas = items.map(d => filaCliente(d).replace('<tr ', `<tr data-cligroup-row="${escHtml(clave)}" `)).join('');
+    return cab + filas;
+  }).join('');
+
+  // Aplicar estado colapsado
+  claves.forEach(clave => {
+    if (clienteGrupoColapsado[clave]) {
+      tbody.querySelectorAll(`tr[data-cligroup-row="${cssEscapa(clave)}"]`).forEach(tr=>tr.style.display='none');
+    }
+  });
+};
+
+/* Estado de grupos de clientes (colapsado) + persistencia */
+const clienteGrupoColapsado = {};
+window.toggleClienteGrupo = (clave, cab) => {
+  const colapsar = !clienteGrupoColapsado[clave];
+  clienteGrupoColapsado[clave] = colapsar;
+  cab.classList.toggle('colapsado', colapsar);
+  document.querySelectorAll(`#doctorsBody tr[data-cligroup-row="${cssEscapa(clave)}"]`).forEach(tr=>{
+    tr.style.display = colapsar ? 'none' : '';
+  });
+  // Persistir
+  clearTimeout(_cliGrupoTimer);
+  _cliGrupoTimer = setTimeout(()=>{
+    const cerrados={}; Object.keys(clienteGrupoColapsado).forEach(k=>{if(clienteGrupoColapsado[k])cerrados[k]=true;});
+    setDoc(doc(db,'uiPrefs','clienteGrupos'),{colapsados:cerrados,updatedAt:serverTimestamp()}).catch(()=>{});
+  },500);
+};
+let _cliGrupoTimer = null;
+
+/* Mover un cliente a un grupo (crea el grupo si no existe) */
+window.openMoverClienteGrupo = (clienteId) => {
+  const d = doctors.find(x=>x.id===clienteId);
+  if (!d) return;
+  const gruposExistentes = [...new Set(doctors.map(x=>(x.grupo||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'es'));
+  _moverClienteId = clienteId;
+  const sel = document.getElementById('moverGrupoSelect');
+  sel.innerHTML = '<option value="">— Sin grupo —</option>'
+    + gruposExistentes.map(g=>`<option value="${escHtml(g)}" ${g===(d.grupo||'')?'selected':''}>${escHtml(g)}</option>`).join('');
+  document.getElementById('moverGrupoNuevo').value = '';
+  document.getElementById('moverClienteNombre').textContent = d.nombre;
+  document.getElementById('moverGrupoModal').classList.add('open');
+};
+let _moverClienteId = null;
+window.closeMoverGrupoModal = () => { document.getElementById('moverGrupoModal').classList.remove('open'); _moverClienteId=null; };
+window.guardarMoverGrupo = async () => {
+  if (!_moverClienteId) return;
+  const nuevo = document.getElementById('moverGrupoNuevo').value.trim();
+  const sel   = document.getElementById('moverGrupoSelect').value;
+  const grupo = nuevo || sel;   // el nombre nuevo tiene prioridad
+  try {
+    await updateDoc(doc(db,'doctors',_moverClienteId), { grupo });
+    toast(grupo ? `Cliente movido a "${grupo}".` : 'Cliente sin grupo.', 'success');
+    closeMoverGrupoModal();
+  } catch(e){ toast('Error: '+e.message,'error'); }
 };
 window.openDoctorModal = (id=null) => {
   editingDoctorId=id;
