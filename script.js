@@ -235,7 +235,7 @@ window.navigate = (view,el) => {
   document.getElementById('view-'+view)?.classList.add('active');
   const sideItem=document.querySelector(`.nav-item[onclick*="'${view}'"]`);
   if(sideItem) sideItem.classList.add('active');
-  const labels={dashboard:'Dashboard',doctores:'Clientes',kanban:'Tablero Kanban',tareas:'Tareas',chat:'Chat del equipo',equipo:'Equipo',alertas:'Alertas',calendario:'Calendario',reportes:'Reportes',resumen:'Resumen de Procesos',egresos:'UROEXPERTOS',turnos:'Cuadro de Turnos',extraccion:'Extracción de Datos',uroexpertos2:'UROEXPERTOS 2'};
+  const labels={dashboard:'Dashboard',doctores:'Clientes',kanban:'Tablero Kanban',tareas:'Tareas',chat:'Chat del equipo',equipo:'Equipo',alertas:'Alertas',calendario:'Calendario',reportes:'Reportes',resumen:'Resumen de Procesos',egresos:'UROEXPERTOS',turnos:'Cuadro de Turnos',extraccion:'Extracción de Datos',uroexpertos2:'Nueva Vista'};
   document.getElementById('breadcrumb').textContent=labels[view]||view;
   if(window.innerWidth<=768){ document.getElementById('sidebar').classList.remove('mobile-open'); document.getElementById('sidebarOverlay').classList.remove('open'); }
   if(view==='tareas') applyTareaFilters();
@@ -268,14 +268,14 @@ const MODULOS_CATALOGO = {
   alertas:    { label:'Alertas',             icon:'fa-bell' },
   resumen:    { label:'Resumen Procesos',    icon:'fa-chart-pie' },
   egresos:    { label:'UROEXPERTOS',         icon:'fa-file-invoice-dollar' },
-  uroexpertos2: { label:'UROEXPERTOS 2',     icon:'fa-file-invoice-dollar' },
+  uroexpertos2: { label:'Nueva Vista',        icon:'fa-file-invoice-dollar' },
   turnos:     { label:'Cuadro de Turnos',    icon:'fa-calendar-days' },
   reportes:   { label:'Reportes',            icon:'fa-chart-bar' },
   extraccion: { label:'Extracción de Datos', icon:'fa-file-export' },
 };
 
 /* ── Nombre personalizable de UROEXPERTOS 2 ── */
-let uro2Nombre = 'UROEXPERTOS 2';
+let uro2Nombre = 'Nueva Vista';
 async function cargarNombreUro2(){
   try {
     const snap = await getDoc(doc(db,'uiPrefs','uroexpertos2'));
@@ -5012,11 +5012,6 @@ const cl_busquedaTablas = {};
 const cl_grupoColapsado = {};
 
 function cl_initEgresos() {
-  // Cargar logo UROEXPERTOS en el encabezado
-  const logoImg = document.getElementById('uroLogoHeader2');
-  if (logoImg && typeof UROEXPERTOS_LOGO_B64 !== 'undefined') logoImg.src = UROEXPERTOS_LOGO_B64;
-  // El estado de carpetas se carga en subscribeEgresos (al login).
-  // Salvaguarda: si aún no se cargó, hacerlo ahora y re-renderizar.
   // UROEXPERTOS 2 usa su propio estado de carpetas (cl_grupoColapsado)
   cl_renderEgresoTable();
   cl_renderCustomTables();
