@@ -7506,16 +7506,6 @@ let ct_turnos = [];
 let ct_turnosCurrentDate = new Date();
 let ct_editTurnoId = null;
 
-function ct_subscribeTurnos() {
-  onSnapshot(collection(db,'turnos_v2'), snap => {
-    ct_turnos = snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>a.fecha?.localeCompare(b.fecha));
-    if(document.getElementById('view-ct_turnos')?.classList.contains('active')){
-      ct_renderTurnos();
-      ct_renderTurnosTabla();
-    }
-  });
-}
-
 function ct_initTurnos() {
   ct_turnosCurrentDate = new Date();
   ct_renderTurnos();
