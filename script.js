@@ -7419,7 +7419,7 @@ window.exportarTablaExcel = (tablaId) => {
 
   // Fila de totales
   const totales = [
-    'TOTAL','','',
+    'TOTAL','','','',
     filas.reduce((s,f)=>s+fmtNum(f.valorFactura),0),
     filas.reduce((s,f)=>s+fmtNum(f.abono),0),
     filas.reduce((s,f)=>s+fmtNum(f.glosa),0),
@@ -7438,7 +7438,7 @@ window.exportarTablaExcel = (tablaId) => {
   // Estilo de anchos de columna
   ws['!cols'] = [
     {wch:14},{wch:10},{wch:22},{wch:14},
-    {wch:12},{wch:12},{wch:13},{wch:10},{wch:12},
+    {wch:14},{wch:12},{wch:12},{wch:13},{wch:10},{wch:12},
     {wch:12},{wch:12},{wch:14},{wch:14}
   ];
 
