@@ -5327,7 +5327,7 @@ window.cl_saveEgreso = async () => {
 
   // Leer hijas del DOM — todos los campos iguales a la madre
   const hijas = [];
-  document.querySelectorAll('#hijasBody tr').forEach(row=>{
+  document.querySelectorAll('#hijasBodyV2 tr').forEach(row=>{
     const honorarioMes     = row.querySelector('.hija-mes')?.value||'';
     const concepto         = row.querySelector('.hija-concepto')?.value.trim()||'';
     const nombre           = row.querySelector('.hija-nombre')?.value||'';
@@ -5938,7 +5938,7 @@ window.cl_saveTablaRow = async () => {
 
   // Activar candado y deshabilitar el botón ANTES del await
   cl__guardandoFila = true;
-  const btnGuardar = document.querySelector('#tablaRowModal .btn-primary');
+  const btnGuardar = document.querySelector('#tablaRowModalV2 .btn-primary');
   const btnHtmlPrev = btnGuardar?.innerHTML;
   if (btnGuardar) { btnGuardar.disabled = true; btnGuardar.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Guardando...'; }
 
