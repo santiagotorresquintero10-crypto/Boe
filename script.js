@@ -4003,18 +4003,24 @@ function renderHijasTable() {
       <td><input type="number" class="hija-entidad"  value="${h.valorEntidad||''}"       placeholder="0" min="0"
         oninput="recalcHijaRow(this)"/></td>
       <td>
-        <div style="display:flex;gap:4px;align-items:center">
-          <select class="hija-admin-modo" onchange="recalcHijaRow(this)" title="Modo de administración"
-            style="border:1.5px solid var(--gray-1);border-radius:6px;padding:6px 4px;font-size:11px;background:white;color:var(--navy);font-weight:600;cursor:pointer">
-            <option value="directo" ${h.adminModo!=='pct'?'selected':''}>$</option>
-            <option value="pct" ${h.adminModo==='pct'?'selected':''}>%</option>
-          </select>
-          <input type="number" class="hija-admin-pct" value="${h.adminPct||''}" placeholder="%" min="0" max="100" step="0.01"
-            oninput="recalcHijaRow(this)" title="Porcentaje de administración"
-            style="width:52px;${h.adminModo==='pct'?'':'display:none'}"/>
-          <input type="number" class="hija-admin" value="${h.administracion||''}" placeholder="0" min="0"
-            oninput="recalcHijaRow(this)" ${h.adminModo==='pct'?'readonly':''}
-            style="${h.adminModo==='pct'?'background:#f0f4fa':''}"/>
+        <div class="hija-admin-cell">
+          <div class="hija-admin-fila1">
+            <select class="hija-admin-modo" onchange="recalcHijaRow(this)" title="Cómo se calcula la administración">
+              <option value="directo" ${h.adminModo!=='pct'?'selected':''}>Valor $</option>
+              <option value="pct" ${h.adminModo==='pct'?'selected':''}>Porcentaje %</option>
+            </select>
+            <input type="number" class="hija-admin-pct" value="${h.adminPct||''}" placeholder="%" min="0" max="100" step="0.01"
+              oninput="recalcHijaRow(this)" title="Porcentaje de administración"
+              style="${h.adminModo==='pct'?'':'display:none'}"/>
+            <input type="number" class="hija-admin-directo" value="${h.adminModo!=='pct'?(h.administracion||''):''}" placeholder="0" min="0"
+              oninput="recalcHijaRow(this)" title="Valor de administración"
+              style="width:100px;text-align:right;${h.adminModo==='pct'?'display:none':''}"/>
+          </div>
+          <div class="hija-admin-resultado">
+            <span class="lbl">Admin.</span>
+            <input type="number" class="hija-admin" value="${h.administracion||''}" readonly tabindex="-1"
+              style="border:none;background:transparent;width:100%;text-align:right;font-weight:800;color:var(--navy);padding:0"/>
+          </div>
         </div>
       </td>
       <td><input type="number" class="hija-valor"    value="${h.valorEspecialista||''}"  placeholder="0" min="0"
@@ -4049,37 +4055,40 @@ window.recalcHijaRow = (triggerEl) => {
   const entidadEl = row.querySelector('.hija-entidad');
   const modoEl    = row.querySelector('.hija-admin-modo');
   const pctEl     = row.querySelector('.hija-admin-pct');
-  const adminEl   = row.querySelector('.hija-admin');
+  const directoEl = row.querySelector('.hija-admin-directo');
+  const adminEl   = row.querySelector('.hija-admin');       // resultado (readonly, siempre visible)
   const espEl     = row.querySelector('.hija-valor');
   if (!entidadEl || !adminEl) return;
 
   const entidad = Number(entidadEl.value)||0;
   const modo    = modoEl?.value || 'directo';
+  let admin = 0;
 
-  // Mostrar/ocultar el campo de porcentaje y bloquear admin según modo
   if (modo === 'pct') {
+    // Mostrar campo %, ocultar campo valor directo
     if (pctEl) pctEl.style.display = '';
-    adminEl.readOnly = true;
-    adminEl.style.background = '#f0f4fa';
+    if (directoEl) directoEl.style.display = 'none';
     let pct = Number(pctEl?.value)||0;
     if (pct < 0) pct = 0; if (pct > 100) pct = 100;
     if (pctEl) pctEl.value = pct || '';
-    adminEl.value = Math.round(entidad * pct / 100);
+    admin = Math.round(entidad * pct / 100);
   } else {
+    // Mostrar campo valor directo, ocultar %
     if (pctEl) pctEl.style.display = 'none';
-    adminEl.readOnly = false;
-    adminEl.style.background = '';
+    if (directoEl) directoEl.style.display = '';
+    admin = Number(directoEl?.value)||0;
   }
 
-  // Validación: admin no puede superar entidad
-  let admin = Number(adminEl.value)||0;
+  // Validación: administración no puede superar la entidad
   if (admin > entidad) {
     admin = entidad;
-    adminEl.value = admin;
-    adminEl.style.borderColor = 'var(--red, #e74c3c)';
-    setTimeout(()=>{ adminEl.style.borderColor=''; }, 1200);
+    if (modo!=='pct' && directoEl) directoEl.value = admin;
+    adminEl.style.color = 'var(--red, #e74c3c)';
+    setTimeout(()=>{ adminEl.style.color=''; }, 1200);
   }
 
+  // Resultado de Administración SIEMPRE visible
+  adminEl.value = admin;
   // Valor Especialista automático = Entidad − Administración
   if (espEl) espEl.value = Math.max(0, entidad - admin);
   updateHijasTotal();
@@ -5403,18 +5412,24 @@ function cl_renderHijasTable() {
       <td><input type="number" class="hija-entidad"  value="${h.valorEntidad||''}"       placeholder="0" min="0"
         oninput="cl_recalcHijaRow(this)"/></td>
       <td>
-        <div style="display:flex;gap:4px;align-items:center">
-          <select class="hija-admin-modo" onchange="cl_recalcHijaRow(this)" title="Modo de administración"
-            style="border:1.5px solid var(--gray-1);border-radius:6px;padding:6px 4px;font-size:11px;background:white;color:var(--navy);font-weight:600;cursor:pointer">
-            <option value="directo" ${h.adminModo!=='pct'?'selected':''}>$</option>
-            <option value="pct" ${h.adminModo==='pct'?'selected':''}>%</option>
-          </select>
-          <input type="number" class="hija-admin-pct" value="${h.adminPct||''}" placeholder="%" min="0" max="100" step="0.01"
-            oninput="cl_recalcHijaRow(this)" title="Porcentaje de administración"
-            style="width:52px;${h.adminModo==='pct'?'':'display:none'}"/>
-          <input type="number" class="hija-admin" value="${h.administracion||''}" placeholder="0" min="0"
-            oninput="cl_recalcHijaRow(this)" ${h.adminModo==='pct'?'readonly':''}
-            style="${h.adminModo==='pct'?'background:#f0f4fa':''}"/>
+        <div class="hija-admin-cell">
+          <div class="hija-admin-fila1">
+            <select class="hija-admin-modo" onchange="cl_recalcHijaRow(this)" title="Cómo se calcula la administración">
+              <option value="directo" ${h.adminModo!=='pct'?'selected':''}>Valor $</option>
+              <option value="pct" ${h.adminModo==='pct'?'selected':''}>Porcentaje %</option>
+            </select>
+            <input type="number" class="hija-admin-pct" value="${h.adminPct||''}" placeholder="%" min="0" max="100" step="0.01"
+              oninput="cl_recalcHijaRow(this)" title="Porcentaje de administración"
+              style="${h.adminModo==='pct'?'':'display:none'}"/>
+            <input type="number" class="hija-admin-directo" value="${h.adminModo!=='pct'?(h.administracion||''):''}" placeholder="0" min="0"
+              oninput="cl_recalcHijaRow(this)" title="Valor de administración"
+              style="width:100px;text-align:right;${h.adminModo==='pct'?'display:none':''}"/>
+          </div>
+          <div class="hija-admin-resultado">
+            <span class="lbl">Admin.</span>
+            <input type="number" class="hija-admin" value="${h.administracion||''}" readonly tabindex="-1"
+              style="border:none;background:transparent;width:100%;text-align:right;font-weight:800;color:var(--navy);padding:0"/>
+          </div>
         </div>
       </td>
       <td><input type="number" class="hija-valor"    value="${h.valorEspecialista||''}"  placeholder="0" min="0"
@@ -5448,35 +5463,36 @@ window.cl_recalcHijaRow = (triggerEl) => {
   const entidadEl = row.querySelector('.hija-entidad');
   const modoEl    = row.querySelector('.hija-admin-modo');
   const pctEl     = row.querySelector('.hija-admin-pct');
-  const adminEl   = row.querySelector('.hija-admin');
+  const directoEl = row.querySelector('.hija-admin-directo');
+  const adminEl   = row.querySelector('.hija-admin');       // resultado (readonly, siempre visible)
   const espEl     = row.querySelector('.hija-valor');
   if (!entidadEl || !adminEl) return;
 
   const entidad = Number(entidadEl.value)||0;
   const modo    = modoEl?.value || 'directo';
+  let admin = 0;
 
   if (modo === 'pct') {
     if (pctEl) pctEl.style.display = '';
-    adminEl.readOnly = true;
-    adminEl.style.background = '#f0f4fa';
+    if (directoEl) directoEl.style.display = 'none';
     let pct = Number(pctEl?.value)||0;
     if (pct < 0) pct = 0; if (pct > 100) pct = 100;
     if (pctEl) pctEl.value = pct || '';
-    adminEl.value = Math.round(entidad * pct / 100);
+    admin = Math.round(entidad * pct / 100);
   } else {
     if (pctEl) pctEl.style.display = 'none';
-    adminEl.readOnly = false;
-    adminEl.style.background = '';
+    if (directoEl) directoEl.style.display = '';
+    admin = Number(directoEl?.value)||0;
   }
 
-  let admin = Number(adminEl.value)||0;
   if (admin > entidad) {
     admin = entidad;
-    adminEl.value = admin;
-    adminEl.style.borderColor = 'var(--red, #e74c3c)';
-    setTimeout(()=>{ adminEl.style.borderColor=''; }, 1200);
+    if (modo!=='pct' && directoEl) directoEl.value = admin;
+    adminEl.style.color = 'var(--red, #e74c3c)';
+    setTimeout(()=>{ adminEl.style.color=''; }, 1200);
   }
 
+  adminEl.value = admin;
   if (espEl) espEl.value = Math.max(0, entidad - admin);
   cl_updateHijasTotal();
 };
