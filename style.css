@@ -2881,3 +2881,40 @@ input,select,textarea{font-family:inherit;font-size:14px;}
 .egr-hijas-table input.hija-entidad,
 .egr-hijas-table input.hija-valor { min-width:110px; text-align:right; font-weight:700; }
 .egr-hijas-table td { white-space:nowrap; }
+
+/* ══ SECCIÓN DE PAGOS Y SALDO (fila de tabla personalizada) ══ */
+.pagos-block {
+  margin-top:18px; padding:16px; border:1.5px solid var(--gray-1);
+  border-radius:12px; background:var(--gray-0);
+}
+.pagos-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+.pagos-title { font-weight:800; color:var(--navy); font-size:13.5px; }
+.pagos-title i { color:var(--blue); margin-right:6px; }
+.pagos-list { display:flex; flex-direction:column; gap:7px; margin-bottom:8px; }
+.pago-row { display:flex; gap:8px; align-items:center; }
+.pago-row .pago-fecha { flex:0 0 150px; }
+.pago-row .pago-monto { flex:1; text-align:right; font-weight:700; }
+.pago-row input {
+  border:1.5px solid var(--gray-1); border-radius:8px; padding:8px 10px;
+  font-size:13px; font-family:'Nunito',sans-serif; color:var(--navy); background:white; outline:none;
+}
+.pago-row input:focus { border-color:var(--blue); }
+.pago-del {
+  flex:0 0 auto; background:none; border:none; color:var(--gray-3);
+  cursor:pointer; padding:8px; border-radius:6px; transition:.15s;
+}
+.pago-del:hover { color:var(--red); background:var(--red-pale, #fdeaea); }
+.pagos-empty { font-size:12.5px; color:var(--gray-3); padding:6px 2px; }
+.pagos-resumen {
+  margin-top:12px; padding-top:12px; border-top:1.5px dashed var(--gray-1);
+  display:flex; flex-direction:column; gap:6px;
+}
+.pr-linea { display:flex; justify-content:space-between; align-items:center; font-size:13px; color:var(--navy); }
+.pr-linea strong { font-weight:800; white-space:nowrap; }
+.pr-saldo { font-size:15px; padding-top:6px; border-top:1px solid var(--gray-1); margin-top:2px; }
+.pr-saldo strong { font-size:16px; }
+.pr-estado { margin-top:8px; font-weight:800; font-size:13px; border-radius:8px; text-align:center; }
+.pr-estado:not(:empty) { padding:9px 12px; }
+.pr-estado.pr-pagada { background:#e8f7ee; color:#1a7a3d; border:1.5px solid #2ecc71; }
+.pr-estado.pr-proximo { background:#fff4e5; color:#b35900; border:1.5px solid #ff9800; }
+.pr-estado i { margin-right:6px; }

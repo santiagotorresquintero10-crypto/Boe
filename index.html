@@ -1456,6 +1456,24 @@
         <i class="fa-solid fa-circle-check"></i>
         <span id="egresoAutoMsg"></span>
       </div>
+
+      <!-- ══ PAGOS REALIZADOS Y SALDO ══ -->
+      <div class="pagos-block">
+        <div class="pagos-head">
+          <div class="pagos-title"><i class="fa-solid fa-hand-holding-dollar"></i> Pagos realizados al doctor</div>
+          <button type="button" class="btn btn-ghost btn-xs" onclick="addPagoRow()"><i class="fa-solid fa-plus"></i> Registrar pago</button>
+        </div>
+        <div class="pagos-list" id="pagosList"></div>
+        <div class="pagos-empty" id="pagosEmpty">Sin pagos registrados — el saldo es el valor neto completo.</div>
+
+        <!-- Resumen dinámico -->
+        <div class="pagos-resumen" id="pagosResumen">
+          <div class="pr-linea"><span>Valor neto a pagar:</span><strong id="prNeto">$ 0</strong></div>
+          <div class="pr-linea"><span>Total pagado:</span><strong id="prPagado" style="color:#1a7a3d">$ 0</strong></div>
+          <div class="pr-linea pr-saldo"><span>Saldo pendiente:</span><strong id="prSaldo">$ 0</strong></div>
+          <div class="pr-estado" id="prEstado"></div>
+        </div>
+      </div>
     </div>
     <div class="modal-foot">
       <button class="btn btn-ghost" onclick="closeTablaRowModal()">Cancelar</button>
@@ -2027,6 +2045,22 @@
       <div class="egr-autocomplete-info" id="egresoAutoInfoV2" style="display:none">
         <i class="fa-solid fa-circle-check"></i>
         <span id="egresoAutoMsgV2"></span>
+      </div>
+
+      <!-- ══ PAGOS REALIZADOS Y SALDO (V2) ══ -->
+      <div class="pagos-block">
+        <div class="pagos-head">
+          <div class="pagos-title"><i class="fa-solid fa-hand-holding-dollar"></i> Pagos realizados al doctor</div>
+          <button type="button" class="btn btn-ghost btn-xs" onclick="cl_addPagoRow()"><i class="fa-solid fa-plus"></i> Registrar pago</button>
+        </div>
+        <div class="pagos-list" id="pagosListV2"></div>
+        <div class="pagos-empty" id="pagosEmptyV2">Sin pagos registrados — el saldo es el valor neto completo.</div>
+        <div class="pagos-resumen" id="pagosResumenV2">
+          <div class="pr-linea"><span>Valor neto a pagar:</span><strong id="prNetoV2">$ 0</strong></div>
+          <div class="pr-linea"><span>Total pagado:</span><strong id="prPagadoV2" style="color:#1a7a3d">$ 0</strong></div>
+          <div class="pr-linea pr-saldo"><span>Saldo pendiente:</span><strong id="prSaldoV2">$ 0</strong></div>
+          <div class="pr-estado" id="prEstadoV2"></div>
+        </div>
       </div>
     </div>
     <div class="modal-foot">

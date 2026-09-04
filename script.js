@@ -4672,6 +4672,9 @@ window.openTablaRowModal = (tablaId, idx) => {
   document.getElementById('trTiquetes').value    = f?.tiquetes||'';
   document.getElementById('trHotel').value       = f?.hotel||'';
   document.getElementById('trTransporte').value  = f?.transporte||'';
+  // Cargar historial de pagos de la fila (o vacío para fila nueva)
+  _pagosTmp = f?.pagos ? JSON.parse(JSON.stringify(f.pagos)) : [];
+  renderPagos();
   calcValorPagar();
   document.getElementById('egresoAutoInfo').style.display='none';
   document.getElementById('tablaRowModal').classList.add('open');
@@ -4735,7 +4738,74 @@ window.calcValorPagar = () => {
   const total = base - descuentos;
   const el = document.getElementById('trValorPagar');
   if (el) { el.value = total; el.style.color = total < 0 ? 'var(--red)' : 'var(--navy)'; }
+  calcSaldo();
 };
+
+/* ── PAGOS REALIZADOS (historial) y SALDO PENDIENTE ── */
+let _pagosTmp = [];   // [{monto, fecha}] del modal activo (original)
+
+window.addPagoRow = () => {
+  _pagosTmp.push({ monto:0, fecha:new Date().toISOString().slice(0,10) });
+  renderPagos();
+};
+window.removePagoRow = (i) => {
+  _pagosTmp.splice(i,1);
+  renderPagos();
+};
+window.onPagoChange = (i, campo, val) => {
+  if (!_pagosTmp[i]) return;
+  _pagosTmp[i][campo] = campo==='monto' ? (Number(val)||0) : val;
+  calcSaldo();
+};
+function renderPagos() {
+  const list  = document.getElementById('pagosList');
+  const empty = document.getElementById('pagosEmpty');
+  if (!list) return;
+  if (!_pagosTmp.length) {
+    list.innerHTML = '';
+    if (empty) empty.style.display = 'block';
+    calcSaldo(); return;
+  }
+  if (empty) empty.style.display = 'none';
+  list.innerHTML = _pagosTmp.map((p,i)=>`
+    <div class="pago-row">
+      <input type="date" class="pago-fecha" value="${p.fecha||''}"
+        onchange="onPagoChange(${i},'fecha',this.value)"/>
+      <input type="number" class="pago-monto" value="${p.monto||''}" placeholder="Monto" min="0"
+        oninput="onPagoChange(${i},'monto',this.value)"/>
+      <button type="button" class="pago-del" onclick="removePagoRow(${i})" title="Eliminar pago"><i class="fa-solid fa-trash"></i></button>
+    </div>`).join('');
+  calcSaldo();
+}
+/* Calcula neto, total pagado, saldo y actualiza alerta/estado */
+function calcSaldo() {
+  const neto = Number(document.getElementById('trValorPagar')?.value)||0;
+  const pagado = _pagosTmp.reduce((s,p)=>s+(Number(p.monto)||0),0);
+  const saldo = neto - pagado;
+
+  const setTxt = (id,val) => { const el=document.getElementById(id); if(el) el.textContent = fmtCOP(val); };
+  setTxt('prNeto', neto);
+  setTxt('prPagado', pagado);
+  setTxt('prSaldo', saldo);
+
+  const estadoEl = document.getElementById('prEstado');
+  const saldoEl  = document.getElementById('prSaldo');
+  if (!estadoEl) return;
+
+  if (saldo <= 0 && neto > 0) {
+    estadoEl.className = 'pr-estado pr-pagada';
+    estadoEl.innerHTML = '<i class="fa-solid fa-circle-check"></i> PAGADA';
+    if (saldoEl) saldoEl.style.color = '#1a7a3d';
+  } else if (neto > 0 && saldo <= neto * 0.10) {
+    estadoEl.className = 'pr-estado pr-proximo';
+    estadoEl.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> Pago próximo a completarse — saldo ${fmtCOP(saldo)}`;
+    if (saldoEl) saldoEl.style.color = '#b35900';
+  } else {
+    estadoEl.className = 'pr-estado';
+    estadoEl.innerHTML = '';
+    if (saldoEl) saldoEl.style.color = 'var(--navy)';
+  }
+}
 
 let _guardandoFila = false;   // candado anti-reentrada (doble clic / doble evento)
 window.saveTablaRow = async () => {
@@ -4774,6 +4844,7 @@ window.saveTablaRow = async () => {
     hotel:        Number(document.getElementById('trHotel').value)||0,
     transporte:   Number(document.getElementById('trTransporte').value)||0,
     valorPagar:   Number(document.getElementById('trValorPagar').value)||0,
+    pagos:        JSON.parse(JSON.stringify(_pagosTmp||[])),
   };
 
   const filas = [...(tabla.filas||[])];
@@ -5998,6 +6069,8 @@ window.cl_openTablaRowModal = (tablaId, idx) => {
   document.getElementById('trTiquetesV2').value    = f?.tiquetes||'';
   document.getElementById('trHotelV2').value       = f?.hotel||'';
   document.getElementById('trTransporteV2').value  = f?.transporte||'';
+  cl__pagosTmp = f?.pagos ? JSON.parse(JSON.stringify(f.pagos)) : [];
+  cl_renderPagos();
   cl_calcValorPagar();
   document.getElementById('egresoAutoInfoV2').style.display='none';
   document.getElementById('tablaRowModalV2').classList.add('open');
@@ -6059,7 +6132,73 @@ window.cl_calcValorPagar = () => {
   const total = base - descuentos;
   const el = document.getElementById('trValorPagarV2');
   if (el) { el.value = total; el.style.color = total < 0 ? 'var(--red)' : 'var(--navy)'; }
+  cl_calcSaldo();
 };
+
+/* ── PAGOS REALIZADOS (historial) y SALDO PENDIENTE — UROEXPERTOS 2 ── */
+let cl__pagosTmp = [];
+
+window.cl_addPagoRow = () => {
+  cl__pagosTmp.push({ monto:0, fecha:new Date().toISOString().slice(0,10) });
+  cl_renderPagos();
+};
+window.cl_removePagoRow = (i) => {
+  cl__pagosTmp.splice(i,1);
+  cl_renderPagos();
+};
+window.cl_onPagoChange = (i, campo, val) => {
+  if (!cl__pagosTmp[i]) return;
+  cl__pagosTmp[i][campo] = campo==='monto' ? (Number(val)||0) : val;
+  cl_calcSaldo();
+};
+function cl_renderPagos() {
+  const list  = document.getElementById('pagosListV2');
+  const empty = document.getElementById('pagosEmptyV2');
+  if (!list) return;
+  if (!cl__pagosTmp.length) {
+    list.innerHTML = '';
+    if (empty) empty.style.display = 'block';
+    cl_calcSaldo(); return;
+  }
+  if (empty) empty.style.display = 'none';
+  list.innerHTML = cl__pagosTmp.map((p,i)=>`
+    <div class="pago-row">
+      <input type="date" class="pago-fecha" value="${p.fecha||''}"
+        onchange="cl_onPagoChange(${i},'fecha',this.value)"/>
+      <input type="number" class="pago-monto" value="${p.monto||''}" placeholder="Monto" min="0"
+        oninput="cl_onPagoChange(${i},'monto',this.value)"/>
+      <button type="button" class="pago-del" onclick="cl_removePagoRow(${i})" title="Eliminar pago"><i class="fa-solid fa-trash"></i></button>
+    </div>`).join('');
+  cl_calcSaldo();
+}
+function cl_calcSaldo() {
+  const neto = Number(document.getElementById('trValorPagarV2')?.value)||0;
+  const pagado = cl__pagosTmp.reduce((s,p)=>s+(Number(p.monto)||0),0);
+  const saldo = neto - pagado;
+
+  const setTxt = (id,val) => { const el=document.getElementById(id); if(el) el.textContent = fmtCOP(val); };
+  setTxt('prNetoV2', neto);
+  setTxt('prPagadoV2', pagado);
+  setTxt('prSaldoV2', saldo);
+
+  const estadoEl = document.getElementById('prEstadoV2');
+  const saldoEl  = document.getElementById('prSaldoV2');
+  if (!estadoEl) return;
+
+  if (saldo <= 0 && neto > 0) {
+    estadoEl.className = 'pr-estado pr-pagada';
+    estadoEl.innerHTML = '<i class="fa-solid fa-circle-check"></i> PAGADA';
+    if (saldoEl) saldoEl.style.color = '#1a7a3d';
+  } else if (neto > 0 && saldo <= neto * 0.10) {
+    estadoEl.className = 'pr-estado pr-proximo';
+    estadoEl.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> Pago próximo a completarse — saldo ${fmtCOP(saldo)}`;
+    if (saldoEl) saldoEl.style.color = '#b35900';
+  } else {
+    estadoEl.className = 'pr-estado';
+    estadoEl.innerHTML = '';
+    if (saldoEl) saldoEl.style.color = 'var(--navy)';
+  }
+}
 
 window.cl_saveTablaRow = async () => {
   // Si ya hay un guardado en curso, ignorar (evita doble ejecución)
@@ -6097,6 +6236,7 @@ window.cl_saveTablaRow = async () => {
     hotel:        Number(document.getElementById('trHotelV2').value)||0,
     transporte:   Number(document.getElementById('trTransporteV2').value)||0,
     valorPagar:   Number(document.getElementById('trValorPagarV2').value)||0,
+    pagos:        JSON.parse(JSON.stringify(cl__pagosTmp||[])),
   };
 
   const filas = [...(tabla.filas||[])];
