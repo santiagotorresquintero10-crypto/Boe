@@ -4735,9 +4735,11 @@ window.calcValorPagar = () => {
                    + g('trHotel') + g('trTransporte');
   // Si ABONO > 0: base = ABONO. Si ABONO = 0: base = VALOR FACTURA
   const base  = abono > 0 ? abono : g('trValorFactura');
-  const total = base - descuentos;
+  const neto  = base - descuentos;                         // valor neto tras descuentos
+  const pagado = (_pagosTmp||[]).reduce((s,p)=>s+(Number(p.monto)||0),0);
+  const saldo = Math.max(0, neto - pagado);                // Valor a Pagar = saldo pendiente (nunca negativo)
   const el = document.getElementById('trValorPagar');
-  if (el) { el.value = total; el.style.color = total < 0 ? 'var(--red)' : 'var(--navy)'; }
+  if (el) { el.value = saldo; el.style.color = (neto < 0) ? 'var(--red)' : 'var(--navy)'; }
   calcSaldo();
 };
 
@@ -4755,7 +4757,7 @@ window.removePagoRow = (i) => {
 window.onPagoChange = (i, campo, val) => {
   if (!_pagosTmp[i]) return;
   _pagosTmp[i][campo] = campo==='monto' ? (Number(val)||0) : val;
-  calcSaldo();
+  calcValorPagar();
 };
 function renderPagos() {
   const list  = document.getElementById('pagosList');
@@ -4764,7 +4766,7 @@ function renderPagos() {
   if (!_pagosTmp.length) {
     list.innerHTML = '';
     if (empty) empty.style.display = 'block';
-    calcSaldo(); return;
+    calcValorPagar(); return;
   }
   if (empty) empty.style.display = 'none';
   list.innerHTML = _pagosTmp.map((p,i)=>`
@@ -4775,13 +4777,20 @@ function renderPagos() {
         oninput="onPagoChange(${i},'monto',this.value)"/>
       <button type="button" class="pago-del" onclick="removePagoRow(${i})" title="Eliminar pago"><i class="fa-solid fa-trash"></i></button>
     </div>`).join('');
-  calcSaldo();
+  calcValorPagar();
 }
 /* Calcula neto, total pagado, saldo y actualiza alerta/estado */
 function calcSaldo() {
-  const neto = Number(document.getElementById('trValorPagar')?.value)||0;
+  // Calcular el NETO directamente (no leer trValorPagar, que ahora es el saldo)
+  const g = id => Number(document.getElementById(id)?.value)||0;
+  const abono = g('trAbono');
+  const descuentos = g('trGlosa') + g('trReteFuente') + g('trAfc')
+                   + g('trResidentes') + g('trTiquetes')
+                   + g('trHotel') + g('trTransporte');
+  const base = abono > 0 ? abono : g('trValorFactura');
+  const neto = base - descuentos;
   const pagado = _pagosTmp.reduce((s,p)=>s+(Number(p.monto)||0),0);
-  const saldo = neto - pagado;
+  const saldo = Math.max(0, neto - pagado);
 
   const setTxt = (id,val) => { const el=document.getElementById(id); if(el) el.textContent = fmtCOP(val); };
   setTxt('prNeto', neto);
@@ -4794,7 +4803,7 @@ function calcSaldo() {
 
   if (saldo <= 0 && neto > 0) {
     estadoEl.className = 'pr-estado pr-pagada';
-    estadoEl.innerHTML = '<i class="fa-solid fa-circle-check"></i> PAGADA';
+    estadoEl.innerHTML = '<i class="fa-solid fa-circle-check"></i> PAGADO';
     if (saldoEl) saldoEl.style.color = '#1a7a3d';
   } else if (neto > 0 && saldo <= neto * 0.10) {
     estadoEl.className = 'pr-estado pr-proximo';
@@ -6129,9 +6138,11 @@ window.cl_calcValorPagar = () => {
                    + g('trHotelV2') + g('trTransporteV2');
   // Si ABONO > 0: base = ABONO. Si ABONO = 0: base = VALOR FACTURA
   const base  = abono > 0 ? abono : g('trValorFacturaV2');
-  const total = base - descuentos;
+  const neto  = base - descuentos;
+  const pagado = (cl__pagosTmp||[]).reduce((s,p)=>s+(Number(p.monto)||0),0);
+  const saldo = Math.max(0, neto - pagado);                // Valor a Pagar = saldo pendiente (nunca negativo)
   const el = document.getElementById('trValorPagarV2');
-  if (el) { el.value = total; el.style.color = total < 0 ? 'var(--red)' : 'var(--navy)'; }
+  if (el) { el.value = saldo; el.style.color = (neto < 0) ? 'var(--red)' : 'var(--navy)'; }
   cl_calcSaldo();
 };
 
@@ -6149,7 +6160,7 @@ window.cl_removePagoRow = (i) => {
 window.cl_onPagoChange = (i, campo, val) => {
   if (!cl__pagosTmp[i]) return;
   cl__pagosTmp[i][campo] = campo==='monto' ? (Number(val)||0) : val;
-  cl_calcSaldo();
+  cl_calcValorPagar();
 };
 function cl_renderPagos() {
   const list  = document.getElementById('pagosListV2');
@@ -6158,7 +6169,7 @@ function cl_renderPagos() {
   if (!cl__pagosTmp.length) {
     list.innerHTML = '';
     if (empty) empty.style.display = 'block';
-    cl_calcSaldo(); return;
+    cl_calcValorPagar(); return;
   }
   if (empty) empty.style.display = 'none';
   list.innerHTML = cl__pagosTmp.map((p,i)=>`
@@ -6169,12 +6180,18 @@ function cl_renderPagos() {
         oninput="cl_onPagoChange(${i},'monto',this.value)"/>
       <button type="button" class="pago-del" onclick="cl_removePagoRow(${i})" title="Eliminar pago"><i class="fa-solid fa-trash"></i></button>
     </div>`).join('');
-  cl_calcSaldo();
+  cl_calcValorPagar();
 }
 function cl_calcSaldo() {
-  const neto = Number(document.getElementById('trValorPagarV2')?.value)||0;
+  const g = id => Number(document.getElementById(id)?.value)||0;
+  const abono = g('trAbonoV2');
+  const descuentos = g('trGlosaV2') + g('trReteFuenteV2') + g('trAfcV2')
+                   + g('trResidentesV2') + g('trTiquetesV2')
+                   + g('trHotelV2') + g('trTransporteV2');
+  const base = abono > 0 ? abono : g('trValorFacturaV2');
+  const neto = base - descuentos;
   const pagado = cl__pagosTmp.reduce((s,p)=>s+(Number(p.monto)||0),0);
-  const saldo = neto - pagado;
+  const saldo = Math.max(0, neto - pagado);
 
   const setTxt = (id,val) => { const el=document.getElementById(id); if(el) el.textContent = fmtCOP(val); };
   setTxt('prNetoV2', neto);
@@ -6187,7 +6204,7 @@ function cl_calcSaldo() {
 
   if (saldo <= 0 && neto > 0) {
     estadoEl.className = 'pr-estado pr-pagada';
-    estadoEl.innerHTML = '<i class="fa-solid fa-circle-check"></i> PAGADA';
+    estadoEl.innerHTML = '<i class="fa-solid fa-circle-check"></i> PAGADO';
     if (saldoEl) saldoEl.style.color = '#1a7a3d';
   } else if (neto > 0 && saldo <= neto * 0.10) {
     estadoEl.className = 'pr-estado pr-proximo';
