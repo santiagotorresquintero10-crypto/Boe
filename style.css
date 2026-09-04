@@ -2837,3 +2837,23 @@ input,select,textarea{font-family:inherit;font-size:14px;}
 .menu-mod-check:hover { background:var(--gray-0); }
 .menu-mod-check input { width:15px; height:15px; accent-color:var(--blue); cursor:pointer; }
 .menu-mod-check i { color:var(--blue); width:16px; text-align:center; }
+
+/* ══ ALERTA / CONCILIACIÓN DE VALOR ENTIDAD (madre vs hijas) ══ */
+.egr-alerta-row .egr-alerta-dif {
+  background: #fff4e5;
+  color: #b35900;
+  font-size: 12.5px;
+  font-weight: 700;
+  padding: 8px 14px;
+  border-left: 4px solid #ff9800;
+}
+.egr-alerta-row .egr-alerta-dif i { margin-right: 6px; color: #ff9800; }
+.egr-ok-row .egr-ok-conciliado {
+  background: #e8f7ee;
+  color: #1a7a3d;
+  font-size: 12.5px;
+  font-weight: 700;
+  padding: 7px 14px;
+  border-left: 4px solid #2ecc71;
+}
+.egr-ok-row .egr-ok-conciliado i { margin-right: 6px; color: #2ecc71; }

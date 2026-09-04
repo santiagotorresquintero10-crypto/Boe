@@ -3743,6 +3743,11 @@ function renderEgresoTable() {
   const madreHtml = (e, claveGrupo) => {
     const hijas = e.hijas||[];
     const totalHijas = hijas.reduce((s,h)=>s+(Number(h.valorEspecialista)||0),0);
+    const totalEntidadHijas = hijas.reduce((s,h)=>s+(Number(h.valorEntidad)||0),0);
+    const totalAdminHijas   = hijas.reduce((s,h)=>s+(Number(h.administracion)||0),0);
+    const entidadMadre = Number(e.valorEntidad)||0;
+    const difEntidad = entidadMadre - totalEntidadHijas;
+    const hayDif = hijas.length && Math.abs(difEntidad) > 0.5;
     let h = '';
 
     // ── FILA MADRE ──
@@ -3785,13 +3790,30 @@ function renderEgresoTable() {
       </tr>`;
     });
 
-    // ── FILA TOTAL HIJAS ──
+    // ── FILA TOTAL HIJAS (Entidad, Administración, Especialista por separado) ──
     if (hijas.length) {
       h += `<tr class="egr-total-row" data-parent="${e.id}" data-mgroup-row="${escHtml(claveGrupo)}" style="display:none">
-        <td colspan="6" class="egr-total-lbl">Total hijas (${hijas.length}):</td>
-        <td class="egr-total-val">${fmtCOP(totalHijas)}</td>
+        <td colspan="4" class="egr-total-lbl">Total hijas (${hijas.length}):</td>
+        <td class="egr-total-val">${fmtCOP(totalEntidadHijas)}</td>
+        <td class="egr-total-val">${fmtCOP(totalAdminHijas)}</td>
+        <td class="egr-total-val egr-val-esp">${fmtCOP(totalHijas)}</td>
         <td colspan="2"></td>
       </tr>`;
+      if (hayDif) {
+        const signo = difEntidad > 0 ? 'Faltan' : 'Sobran';
+        h += `<tr class="egr-alerta-row" data-parent="${e.id}" data-mgroup-row="${escHtml(claveGrupo)}" style="display:none">
+          <td colspan="9" class="egr-alerta-dif">
+            <i class="fa-solid fa-triangle-exclamation"></i>
+            <strong>ALERTA:</strong> El valor entidad de las hijas (${fmtCOP(totalEntidadHijas)}) no coincide con el de la madre (${fmtCOP(entidadMadre)}). ${signo} ${fmtCOP(Math.abs(difEntidad))}.
+          </td>
+        </tr>`;
+      } else {
+        h += `<tr class="egr-ok-row" data-parent="${e.id}" data-mgroup-row="${escHtml(claveGrupo)}" style="display:none">
+          <td colspan="9" class="egr-ok-conciliado">
+            <i class="fa-solid fa-circle-check"></i> Valor entidad conciliado: hijas y madre coinciden (${fmtCOP(entidadMadre)}).
+          </td>
+        </tr>`;
+      }
     }
     return h;
   };
@@ -3978,8 +4000,23 @@ function renderHijasTable() {
       </td>
       <td><input type="text" class="hija-proveedor" value="${escHtml(h.proveedor||'')}" placeholder="Nombre empresa…" style="border:1.5px solid var(--gray-1);border-radius:8px;padding:8px 10px;font-size:13px;outline:none;font-family:'Nunito',sans-serif;background:#f8faff;color:var(--navy);font-weight:600;width:100%;transition:border-color .2s" readonly/></td>
       <td><input type="text"   class="hija-factura"  value="${escHtml(h.factura||'')}"  placeholder="FE-001-H"/></td>
-      <td><input type="number" class="hija-entidad"  value="${h.valorEntidad||''}"       placeholder="0" min="0"/></td>
-      <td><input type="number" class="hija-admin"    value="${h.administracion||''}"     placeholder="0" min="0"/></td>
+      <td><input type="number" class="hija-entidad"  value="${h.valorEntidad||''}"       placeholder="0" min="0"
+        oninput="recalcHijaRow(this)"/></td>
+      <td>
+        <div style="display:flex;gap:4px;align-items:center">
+          <select class="hija-admin-modo" onchange="recalcHijaRow(this)" title="Modo de administración"
+            style="border:1.5px solid var(--gray-1);border-radius:6px;padding:6px 4px;font-size:11px;background:white;color:var(--navy);font-weight:600;cursor:pointer">
+            <option value="directo" ${h.adminModo!=='pct'?'selected':''}>$</option>
+            <option value="pct" ${h.adminModo==='pct'?'selected':''}>%</option>
+          </select>
+          <input type="number" class="hija-admin-pct" value="${h.adminPct||''}" placeholder="%" min="0" max="100" step="0.01"
+            oninput="recalcHijaRow(this)" title="Porcentaje de administración"
+            style="width:52px;${h.adminModo==='pct'?'':'display:none'}"/>
+          <input type="number" class="hija-admin" value="${h.administracion||''}" placeholder="0" min="0"
+            oninput="recalcHijaRow(this)" ${h.adminModo==='pct'?'readonly':''}
+            style="${h.adminModo==='pct'?'background:#f0f4fa':''}"/>
+        </div>
+      </td>
       <td><input type="number" class="hija-valor"    value="${h.valorEspecialista||''}"  placeholder="0" min="0"
         oninput="updateHijasTotal()"/></td>
       <td><button class="accesos-del-btn" onclick="removeHijaRow(${i})"><i class="fa-solid fa-trash"></i></button></td>
@@ -4004,6 +4041,50 @@ function updateHijasTotal() {
   if (el) el.textContent = fmtCOP(total);
 }
 
+/* Recalcula una fila hija: modo admin (%/directo), administración y valor especialista.
+   Valor Especialista = Valor Entidad − Administración (autocalculado, editable después). */
+window.recalcHijaRow = (triggerEl) => {
+  const row = triggerEl.closest('tr');
+  if (!row) return;
+  const entidadEl = row.querySelector('.hija-entidad');
+  const modoEl    = row.querySelector('.hija-admin-modo');
+  const pctEl     = row.querySelector('.hija-admin-pct');
+  const adminEl   = row.querySelector('.hija-admin');
+  const espEl     = row.querySelector('.hija-valor');
+  if (!entidadEl || !adminEl) return;
+
+  const entidad = Number(entidadEl.value)||0;
+  const modo    = modoEl?.value || 'directo';
+
+  // Mostrar/ocultar el campo de porcentaje y bloquear admin según modo
+  if (modo === 'pct') {
+    if (pctEl) pctEl.style.display = '';
+    adminEl.readOnly = true;
+    adminEl.style.background = '#f0f4fa';
+    let pct = Number(pctEl?.value)||0;
+    if (pct < 0) pct = 0; if (pct > 100) pct = 100;
+    if (pctEl) pctEl.value = pct || '';
+    adminEl.value = Math.round(entidad * pct / 100);
+  } else {
+    if (pctEl) pctEl.style.display = 'none';
+    adminEl.readOnly = false;
+    adminEl.style.background = '';
+  }
+
+  // Validación: admin no puede superar entidad
+  let admin = Number(adminEl.value)||0;
+  if (admin > entidad) {
+    admin = entidad;
+    adminEl.value = admin;
+    adminEl.style.borderColor = 'var(--red, #e74c3c)';
+    setTimeout(()=>{ adminEl.style.borderColor=''; }, 1200);
+  }
+
+  // Valor Especialista automático = Entidad − Administración
+  if (espEl) espEl.value = Math.max(0, entidad - admin);
+  updateHijasTotal();
+};
+
 window.saveEgreso = async () => {
   const factura = document.getElementById('eFactura').value.trim();
   const nombre  = document.getElementById('eNombre').value.trim();
@@ -4022,7 +4103,9 @@ window.saveEgreso = async () => {
     const valorEntidad     = Number(row.querySelector('.hija-entidad')?.value)||0;
     const administracion   = Number(row.querySelector('.hija-admin')?.value)||0;
     const valorEspecialista= Number(row.querySelector('.hija-valor')?.value)||0;
-    if (factura||nombre||concepto) hijas.push({fechaFacturacion,honorarioMes,concepto,nombre,tipoPersona,proveedor,factura,valorEntidad,administracion,valorEspecialista});
+    const adminModo        = row.querySelector('.hija-admin-modo')?.value||'directo';
+    const adminPct         = Number(row.querySelector('.hija-admin-pct')?.value)||0;
+    if (factura||nombre||concepto) hijas.push({fechaFacturacion,honorarioMes,concepto,nombre,tipoPersona,proveedor,factura,valorEntidad,administracion,valorEspecialista,adminModo,adminPct});
   });
 
   const data = {
@@ -5063,6 +5146,11 @@ function cl_renderEgresoTable() {
   const madreHtml = (e, claveGrupo) => {
     const hijas = e.hijas||[];
     const totalHijas = hijas.reduce((s,h)=>s+(Number(h.valorEspecialista)||0),0);
+    const totalEntidadHijas = hijas.reduce((s,h)=>s+(Number(h.valorEntidad)||0),0);
+    const totalAdminHijas   = hijas.reduce((s,h)=>s+(Number(h.administracion)||0),0);
+    const entidadMadre = Number(e.valorEntidad)||0;
+    const difEntidad = entidadMadre - totalEntidadHijas;
+    const hayDif = hijas.length && Math.abs(difEntidad) > 0.5;
     let h = '';
 
     // ── FILA MADRE ──
@@ -5105,13 +5193,30 @@ function cl_renderEgresoTable() {
       </tr>`;
     });
 
-    // ── FILA TOTAL HIJAS ──
+    // ── FILA TOTAL HIJAS (Entidad, Administración, Especialista por separado) ──
     if (hijas.length) {
       h += `<tr class="egr-total-row" data-parent="${e.id}" data-mgroup-row="${escHtml(claveGrupo)}" style="display:none">
-        <td colspan="6" class="egr-total-lbl">Total hijas (${hijas.length}):</td>
-        <td class="egr-total-val">${fmtCOP(totalHijas)}</td>
+        <td colspan="4" class="egr-total-lbl">Total hijas (${hijas.length}):</td>
+        <td class="egr-total-val">${fmtCOP(totalEntidadHijas)}</td>
+        <td class="egr-total-val">${fmtCOP(totalAdminHijas)}</td>
+        <td class="egr-total-val egr-val-esp">${fmtCOP(totalHijas)}</td>
         <td colspan="2"></td>
       </tr>`;
+      if (hayDif) {
+        const signo = difEntidad > 0 ? 'Faltan' : 'Sobran';
+        h += `<tr class="egr-alerta-row" data-parent="${e.id}" data-mgroup-row="${escHtml(claveGrupo)}" style="display:none">
+          <td colspan="9" class="egr-alerta-dif">
+            <i class="fa-solid fa-triangle-exclamation"></i>
+            <strong>ALERTA:</strong> El valor entidad de las hijas (${fmtCOP(totalEntidadHijas)}) no coincide con el de la madre (${fmtCOP(entidadMadre)}). ${signo} ${fmtCOP(Math.abs(difEntidad))}.
+          </td>
+        </tr>`;
+      } else {
+        h += `<tr class="egr-ok-row" data-parent="${e.id}" data-mgroup-row="${escHtml(claveGrupo)}" style="display:none">
+          <td colspan="9" class="egr-ok-conciliado">
+            <i class="fa-solid fa-circle-check"></i> Valor entidad conciliado: hijas y madre coinciden (${fmtCOP(entidadMadre)}).
+          </td>
+        </tr>`;
+      }
     }
     return h;
   };
@@ -5295,8 +5400,23 @@ function cl_renderHijasTable() {
       </td>
       <td><input type="text" class="hija-proveedor" value="${escHtml(h.proveedor||'')}" placeholder="Nombre empresa…" style="border:1.5px solid var(--gray-1);border-radius:8px;padding:8px 10px;font-size:13px;outline:none;font-family:'Nunito',sans-serif;background:#f8faff;color:var(--navy);font-weight:600;width:100%;transition:border-color .2s" readonly/></td>
       <td><input type="text"   class="hija-factura"  value="${escHtml(h.factura||'')}"  placeholder="FE-001-H"/></td>
-      <td><input type="number" class="hija-entidad"  value="${h.valorEntidad||''}"       placeholder="0" min="0"/></td>
-      <td><input type="number" class="hija-admin"    value="${h.administracion||''}"     placeholder="0" min="0"/></td>
+      <td><input type="number" class="hija-entidad"  value="${h.valorEntidad||''}"       placeholder="0" min="0"
+        oninput="cl_recalcHijaRow(this)"/></td>
+      <td>
+        <div style="display:flex;gap:4px;align-items:center">
+          <select class="hija-admin-modo" onchange="cl_recalcHijaRow(this)" title="Modo de administración"
+            style="border:1.5px solid var(--gray-1);border-radius:6px;padding:6px 4px;font-size:11px;background:white;color:var(--navy);font-weight:600;cursor:pointer">
+            <option value="directo" ${h.adminModo!=='pct'?'selected':''}>$</option>
+            <option value="pct" ${h.adminModo==='pct'?'selected':''}>%</option>
+          </select>
+          <input type="number" class="hija-admin-pct" value="${h.adminPct||''}" placeholder="%" min="0" max="100" step="0.01"
+            oninput="cl_recalcHijaRow(this)" title="Porcentaje de administración"
+            style="width:52px;${h.adminModo==='pct'?'':'display:none'}"/>
+          <input type="number" class="hija-admin" value="${h.administracion||''}" placeholder="0" min="0"
+            oninput="cl_recalcHijaRow(this)" ${h.adminModo==='pct'?'readonly':''}
+            style="${h.adminModo==='pct'?'background:#f0f4fa':''}"/>
+        </div>
+      </td>
       <td><input type="number" class="hija-valor"    value="${h.valorEspecialista||''}"  placeholder="0" min="0"
         oninput="cl_updateHijasTotal()"/></td>
       <td><button class="accesos-del-btn" onclick="cl_removeHijaRow(${i})"><i class="fa-solid fa-trash"></i></button></td>
@@ -5320,6 +5440,47 @@ function cl_updateHijasTotal() {
   if (el) el.textContent = fmtCOP(total);
 }
 
+/* Recalcula fila hija en UROEXPERTOS 2: modo admin (%/directo), admin y especialista.
+   Valor Especialista = Valor Entidad − Administración (autocalculado, editable después). */
+window.cl_recalcHijaRow = (triggerEl) => {
+  const row = triggerEl.closest('tr');
+  if (!row) return;
+  const entidadEl = row.querySelector('.hija-entidad');
+  const modoEl    = row.querySelector('.hija-admin-modo');
+  const pctEl     = row.querySelector('.hija-admin-pct');
+  const adminEl   = row.querySelector('.hija-admin');
+  const espEl     = row.querySelector('.hija-valor');
+  if (!entidadEl || !adminEl) return;
+
+  const entidad = Number(entidadEl.value)||0;
+  const modo    = modoEl?.value || 'directo';
+
+  if (modo === 'pct') {
+    if (pctEl) pctEl.style.display = '';
+    adminEl.readOnly = true;
+    adminEl.style.background = '#f0f4fa';
+    let pct = Number(pctEl?.value)||0;
+    if (pct < 0) pct = 0; if (pct > 100) pct = 100;
+    if (pctEl) pctEl.value = pct || '';
+    adminEl.value = Math.round(entidad * pct / 100);
+  } else {
+    if (pctEl) pctEl.style.display = 'none';
+    adminEl.readOnly = false;
+    adminEl.style.background = '';
+  }
+
+  let admin = Number(adminEl.value)||0;
+  if (admin > entidad) {
+    admin = entidad;
+    adminEl.value = admin;
+    adminEl.style.borderColor = 'var(--red, #e74c3c)';
+    setTimeout(()=>{ adminEl.style.borderColor=''; }, 1200);
+  }
+
+  if (espEl) espEl.value = Math.max(0, entidad - admin);
+  cl_updateHijasTotal();
+};
+
 window.cl_saveEgreso = async () => {
   const factura = document.getElementById('eFacturaV2').value.trim();
   const nombre  = document.getElementById('eNombreV2').value.trim();
@@ -5338,7 +5499,9 @@ window.cl_saveEgreso = async () => {
     const valorEntidad     = Number(row.querySelector('.hija-entidad')?.value)||0;
     const administracion   = Number(row.querySelector('.hija-admin')?.value)||0;
     const valorEspecialista= Number(row.querySelector('.hija-valor')?.value)||0;
-    if (factura||nombre||concepto) hijas.push({fechaFacturacion,honorarioMes,concepto,nombre,tipoPersona,proveedor,factura,valorEntidad,administracion,valorEspecialista});
+    const adminModo        = row.querySelector('.hija-admin-modo')?.value||'directo';
+    const adminPct         = Number(row.querySelector('.hija-admin-pct')?.value)||0;
+    if (factura||nombre||concepto) hijas.push({fechaFacturacion,honorarioMes,concepto,nombre,tipoPersona,proveedor,factura,valorEntidad,administracion,valorEspecialista,adminModo,adminPct});
   });
 
   const data = {
