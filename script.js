@@ -3987,7 +3987,7 @@ function renderHijasTable() {
         <select class="hija-nombre" style="width:100%;border:1.5px solid var(--gray-1);border-radius:8px;padding:8px 10px;font-size:13px;outline:none;font-family:'Nunito',sans-serif;background:white;color:var(--navy);font-weight:600;cursor:pointer;transition:border-color .2s"
           onchange="autoProveedorFromNombre(this,${i})">
           <option value="">— Seleccionar especialista —</option>
-          ${doctors.filter(d=>d.especialista).map(d=>`<option value="${escHtml(d.especialista)}" ${h.nombre===d.especialista?'selected':''}>${escHtml(d.especialista)}</option>`).join('')}
+          ${doctors.filter(d=>d.especialista).slice().sort((a,b)=>a.especialista.localeCompare(b.especialista,'es',{sensitivity:'base'})).map(d=>`<option value="${escHtml(d.especialista)}" ${h.nombre===d.especialista?'selected':''}>${escHtml(d.especialista)}</option>`).join('')}
           ${h.nombre && !doctors.some(d=>d.especialista===h.nombre)?`<option value="${escHtml(h.nombre)}" selected>${escHtml(h.nombre)}</option>`:''}
         </select>
       </td>
@@ -4665,7 +4665,7 @@ window.openTablaRowModal = (tablaId, idx) => {
 
   // Poblar select de especialistas desde CLIENTES y restaurar selección
   const selNombre = document.getElementById('trNombre');
-  const especialistas = [...new Set(doctors.filter(d=>d.especialista).map(d=>d.especialista))].sort();
+  const especialistas = [...new Set(doctors.filter(d=>d.especialista).map(d=>d.especialista))].sort((a,b)=>a.localeCompare(b,'es',{sensitivity:'base'}));
   const savedNombre = f?.nombre||'';
   // Build options with 'selected' attribute directly on the matching option
   selNombre.innerHTML = '<option value="">— Seleccionar especialista —</option>'
@@ -5491,7 +5491,7 @@ function cl_renderHijasTable() {
         <select class="hija-nombre" style="width:100%;border:1.5px solid var(--gray-1);border-radius:8px;padding:8px 10px;font-size:13px;outline:none;font-family:'Nunito',sans-serif;background:white;color:var(--navy);font-weight:600;cursor:pointer;transition:border-color .2s"
           onchange="cl_autoProveedorFromNombre(this,${i})">
           <option value="">— Seleccionar especialista —</option>
-          ${doctors.filter(d=>d.especialista).map(d=>`<option value="${escHtml(d.especialista)}" ${h.nombre===d.especialista?'selected':''}>${escHtml(d.especialista)}</option>`).join('')}
+          ${doctors.filter(d=>d.especialista).slice().sort((a,b)=>a.especialista.localeCompare(b.especialista,'es',{sensitivity:'base'})).map(d=>`<option value="${escHtml(d.especialista)}" ${h.nombre===d.especialista?'selected':''}>${escHtml(d.especialista)}</option>`).join('')}
           ${h.nombre && !doctors.some(d=>d.especialista===h.nombre)?`<option value="${escHtml(h.nombre)}" selected>${escHtml(h.nombre)}</option>`:''}
         </select>
       </td>
@@ -6082,7 +6082,7 @@ window.cl_openTablaRowModal = (tablaId, idx) => {
 
   // Poblar select de especialistas desde CLIENTES y restaurar selección
   const selNombre = document.getElementById('trNombreV2');
-  const especialistas = [...new Set(doctors.filter(d=>d.especialista).map(d=>d.especialista))].sort();
+  const especialistas = [...new Set(doctors.filter(d=>d.especialista).map(d=>d.especialista))].sort((a,b)=>a.localeCompare(b,'es',{sensitivity:'base'}));
   const savedNombre = f?.nombre||'';
   // Build options with 'selected' attribute directly on the matching option
   selNombre.innerHTML = '<option value="">— Seleccionar especialista —</option>'
