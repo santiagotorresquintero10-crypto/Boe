@@ -4239,34 +4239,45 @@ window.onIdentChange = async (tablaId, selectEl) => {
   tablasEgreso[idx]._selectedIdent  = selectedIds[0]||'';
   renderCustomTables();
 
-  // ── Autocarga de facturas hijas desde los egresos seleccionados ──
   if (!selectedIds.length) return;
   const tabla = tablasEgreso[idx];
   const filasActuales = tabla.filas||[];
 
-  // Factura numbers already existing for each identId
-  const existentes = new Set(
-    filasActuales
-      .filter(f => selectedIds.includes(f.identId))
-      .map(f => (f.factura||'').trim().toLowerCase())
-  );
+  // ── Clave de RELACIÓN interna: madre + índice de la hija (no depende del nombre/factura) ──
+  // Las filas ya vinculadas se identifican por su hijaKey; si una fila vieja no la tiene,
+  // se reconstruye por (identId + factura) para mantener compatibilidad.
+  const hijaKeyDe = (egresoId, i, h) => `${egresoId}::${i}`;
+  const yaVinculadas = new Set();
+  filasActuales.forEach(f => {
+    if (f.hijaKey) yaVinculadas.add(f.hijaKey);
+  });
 
-  // Build new filas from hijas of each selected egreso
+  // ── Traer los datos FRESCOS: releer del array de egresos vigente ──
   const nuevas = [];
+  let totalHijasAsociadas = 0;
   selectedIds.forEach(egresoId => {
     const egreso = egresos.find(e=>e.id===egresoId);
     if (!egreso) return;
-    (egreso.hijas||[]).forEach(h => {
+    const hijas = egreso.hijas||[];
+    totalHijasAsociadas += hijas.length;
+
+    hijas.forEach((h, i) => {
+      const hijaKey = hijaKeyDe(egresoId, i, h);
+      // No duplicar: si esta relación ya está vinculada, saltar
+      if (yaVinculadas.has(hijaKey)) return;
+      // Compatibilidad: si una fila vieja (sin hijaKey) ya representa esta hija por factura, no duplicar
       const factKey = (h.factura||'').trim().toLowerCase();
-      if (!factKey || existentes.has(factKey)) return; // skip duplicates
-      existentes.add(factKey); // prevent duplicates within this batch
+      if (factKey) {
+        const yaPorFactura = filasActuales.some(f =>
+          !f.hijaKey && f.identId===egresoId && (f.factura||'').trim().toLowerCase()===factKey);
+        if (yaPorFactura) return;
+      }
+      yaVinculadas.add(hijaKey);
 
       const valorFactura = Number(h.valorEspecialista)||0;
-      // Use same formula as calcValorPagar: base = valorFactura (no abono)
-      const valorPagar = valorFactura;
-
       nuevas.push({
         rowId:        genRowId(),
+        hijaKey,                       // ← relación interna estable
         identId:      egresoId,
         identIds:     [egresoId],
         factura:      h.factura||'',
@@ -4282,12 +4293,16 @@ window.onIdentChange = async (tablaId, selectEl) => {
         tiquetes:     0,
         hotel:        0,
         transporte:   0,
-        valorPagar,
+        valorPagar:   valorFactura,
+        pagos:        [],
       });
     });
   });
 
-  if (!nuevas.length) return;
+  if (!nuevas.length) {
+    toast(`Sin hijas nuevas por traer. Ya están las ${totalHijasAsociadas} asociadas.`, 'info');
+    return;
+  }
 
   try {
     const filasActualizadas = [...filasActuales, ...nuevas];
@@ -4295,7 +4310,7 @@ window.onIdentChange = async (tablaId, selectEl) => {
       filas: filasActualizadas,
       updatedAt: serverTimestamp()
     });
-    toast(`${nuevas.length} fila${nuevas.length>1?'s':''} creada${nuevas.length>1?'s':''} automáticamente.`, 'success');
+    toast(`${nuevas.length} fila${nuevas.length>1?'s':''} traída${nuevas.length>1?'s':''} (de ${totalHijasAsociadas} hija${totalHijasAsociadas>1?'s':''} asociada${totalHijasAsociadas>1?'s':''}).`, 'success');
   } catch(e) {
     toast('Error al autocargar filas: '+e.message, 'error');
   }
@@ -5721,34 +5736,41 @@ window.cl_onIdentChange = async (tablaId, selectEl) => {
   cl_tablasEgreso[idx]._selectedIdent  = selectedIds[0]||'';
   cl_renderCustomTables();
 
-  // ── Autocarga de facturas hijas desde los cl_egresos seleccionados ──
   if (!selectedIds.length) return;
   const tabla = cl_tablasEgreso[idx];
   const filasActuales = tabla.filas||[];
 
-  // Factura numbers already existing for each identId
-  const existentes = new Set(
-    filasActuales
-      .filter(f => selectedIds.includes(f.identId))
-      .map(f => (f.factura||'').trim().toLowerCase())
-  );
+  // ── Clave de RELACIÓN interna: madre + índice de la hija (no depende del nombre/factura) ──
+  const hijaKeyDe = (egresoId, i, h) => `${egresoId}::${i}`;
+  const yaVinculadas = new Set();
+  filasActuales.forEach(f => {
+    if (f.hijaKey) yaVinculadas.add(f.hijaKey);
+  });
 
-  // Build new filas from hijas of each selected egreso
+  // ── Traer los datos FRESCOS del array de cl_egresos vigente ──
   const nuevas = [];
+  let totalHijasAsociadas = 0;
   selectedIds.forEach(egresoId => {
     const egreso = cl_egresos.find(e=>e.id===egresoId);
     if (!egreso) return;
-    (egreso.hijas||[]).forEach(h => {
+    const hijas = egreso.hijas||[];
+    totalHijasAsociadas += hijas.length;
+
+    hijas.forEach((h, i) => {
+      const hijaKey = hijaKeyDe(egresoId, i, h);
+      if (yaVinculadas.has(hijaKey)) return;
       const factKey = (h.factura||'').trim().toLowerCase();
-      if (!factKey || existentes.has(factKey)) return; // skip duplicates
-      existentes.add(factKey); // prevent duplicates within this batch
+      if (factKey) {
+        const yaPorFactura = filasActuales.some(f =>
+          !f.hijaKey && f.identId===egresoId && (f.factura||'').trim().toLowerCase()===factKey);
+        if (yaPorFactura) return;
+      }
+      yaVinculadas.add(hijaKey);
 
       const valorFactura = Number(h.valorEspecialista)||0;
-      // Use same formula as cl_calcValorPagar: base = valorFactura (no abono)
-      const valorPagar = valorFactura;
-
       nuevas.push({
         rowId:        genRowId(),
+        hijaKey,
         identId:      egresoId,
         identIds:     [egresoId],
         factura:      h.factura||'',
@@ -5764,12 +5786,16 @@ window.cl_onIdentChange = async (tablaId, selectEl) => {
         tiquetes:     0,
         hotel:        0,
         transporte:   0,
-        valorPagar,
+        valorPagar:   valorFactura,
+        pagos:        [],
       });
     });
   });
 
-  if (!nuevas.length) return;
+  if (!nuevas.length) {
+    toast(`Sin hijas nuevas por traer. Ya están las ${totalHijasAsociadas} asociadas.`, 'info');
+    return;
+  }
 
   try {
     const filasActualizadas = [...filasActuales, ...nuevas];
@@ -5777,7 +5803,7 @@ window.cl_onIdentChange = async (tablaId, selectEl) => {
       filas: filasActualizadas,
       updatedAt: serverTimestamp()
     });
-    toast(`${nuevas.length} fila${nuevas.length>1?'s':''} creada${nuevas.length>1?'s':''} automáticamente.`, 'success');
+    toast(`${nuevas.length} fila${nuevas.length>1?'s':''} traída${nuevas.length>1?'s':''} (de ${totalHijasAsociadas} hija${totalHijasAsociadas>1?'s':''} asociada${totalHijasAsociadas>1?'s':''}).`, 'success');
   } catch(e) {
     toast('Error al autocargar filas: '+e.message, 'error');
   }
