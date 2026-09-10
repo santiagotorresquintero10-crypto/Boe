@@ -8111,11 +8111,10 @@ function ct_renderCalMes() {
       const logoHtml = sede && sede.logo
         ? `<img class="cal-ev-logo" src="${sede.logo}" alt=""/>`
         : `<span class="cal-ev-siglabox">${escHtml(sede ? (sede.sigla||ct_siglaDe(sede.nombre)) : ct_siglaDe(t.sede||t.especialista||'—'))}</span>`;
-      const espCruce = tieneCruce && crucesPorDia[dateStr].has((t.especialista||'').trim());
-      return `<div class="turnos-cal-event sede-ev ${espCruce?'con-cruce':''}"
+      return `<div class="turnos-cal-event sede-ev"
         onclick="event.stopPropagation();ct_openTurnoModal('${t.id}')"
         title="${escHtml(t.especialista||'')}${t.sede?' · '+escHtml(t.sede):''}${servicio?' · '+escHtml(servicio):''}">
-        <div class="cal-ev-logobox">${logoHtml}${espCruce?'<i class="fa-solid fa-triangle-exclamation cal-ev-warn"></i>':''}</div>
+        <div class="cal-ev-logobox">${logoHtml}</div>
         ${servicio?`<span class="cal-ev-serv">${escHtml(servicio)}</span>`:''}
       </div>`;
     }).join('');
@@ -8693,8 +8692,7 @@ window.ct_imprimirTurnosMesActual = () => {
         ? `<img class="tp-ev-logo" src="${sede.logo}"/>`
         : `<span class="tp-ev-sigla">${escHtml(sede?(sede.sigla||ct_siglaDe(sede.nombre)):ct_siglaDe(t.sede||'—'))}</span>`;
       const serv = t.servicio || t.tipo || '';
-      const warn = cruceEnDia(ds,(t.especialista||'').trim()) ? ' ⚠' : '';
-      return `<div class="tp-ev tp-ev-sede">${logo}${serv?`<div class="tp-ev-serv">${escHtml(serv)}${warn}</div>`:''}</div>`;
+      return `<div class="tp-ev tp-ev-sede">${logo}${serv?`<div class="tp-ev-serv">${escHtml(serv)}</div>`:''}</div>`;
     }).join('');
     calHtml += `<div class="tp-day${isToday?' tp-today':''}${festivo?' tp-festivo':''}">
       <div class="tp-num">${dd}${hayCruceDia?' ⚠':''}</div>${festivo?`<div class="tp-fest">festivo</div>`:''}${evHtml}

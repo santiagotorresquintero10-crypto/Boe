@@ -2995,6 +2995,18 @@ input,select,textarea{font-family:inherit;font-size:14px;}
 
 /* ═══ IMPRESIÓN CUADRO DE TURNOS 2 — visualización mejorada ═══ */
 @media print {
+  /* Aislar: ocultar TODA la app y mostrar solo la zona de impresión del calendario */
+  body.printing-ct_turnos * { visibility:hidden !important; }
+  body.printing-ct_turnos #turnosPrintZoneT2,
+  body.printing-ct_turnos #turnosPrintZoneT2 * { visibility:visible !important; }
+  body.printing-ct_turnos #turnosPrintZoneT2 {
+    display:block !important;
+    position:absolute !important;
+    left:0 !important; top:0 !important;
+    width:100% !important; height:auto !important;
+    overflow:visible !important; background:white !important;
+    padding:0 !important; margin:0 !important;
+  }
   body.printing-ct_turnos .tp-ev-sede {
     display:flex !important; flex-direction:column; align-items:center; gap:1px;
     background:#fff !important; border:1px solid #ddd !important; border-radius:5px;
