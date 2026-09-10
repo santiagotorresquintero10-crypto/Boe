@@ -8115,7 +8115,7 @@ function ct_renderCalMes() {
       return `<div class="turnos-cal-event sede-ev ${espCruce?'con-cruce':''}"
         onclick="event.stopPropagation();ct_openTurnoModal('${t.id}')"
         title="${escHtml(t.especialista||'')}${t.sede?' · '+escHtml(t.sede):''}${servicio?' · '+escHtml(servicio):''}">
-        <div class="cal-ev-top">${logoHtml}${espCruce?'<i class="fa-solid fa-triangle-exclamation cal-ev-warn"></i>':''}</div>
+        <div class="cal-ev-logobox">${logoHtml}${espCruce?'<i class="fa-solid fa-triangle-exclamation cal-ev-warn"></i>':''}</div>
         ${servicio?`<span class="cal-ev-serv">${escHtml(servicio)}</span>`:''}
       </div>`;
     }).join('');
