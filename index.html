@@ -2282,6 +2282,25 @@
 
 
 <!-- ═══ MODALES CUADRO DE TURNOS 2 ═══ -->
+<!-- ═══ MODAL GESTIÓN DE SEDES (Cuadro de Turnos 2) ═══ -->
+<div class="modal-overlay" id="ctSedesModal">
+  <div class="modal" style="max-width:560px">
+    <div class="modal-header">
+      <h2><i class="fa-solid fa-hospital"></i> Gestionar sedes</h2>
+      <button class="modal-close" onclick="ct_closeSedesModal()"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="modal-body">
+      <div class="ct-sede-nueva">
+        <input type="text" id="ctSedeNombre" placeholder="Nombre de la sede (ej. Clínica Salud Social)"/>
+        <input type="text" id="ctSedeCiudad" placeholder="Ciudad (ej. Sincelejo)"/>
+        <button class="btn btn-primary" onclick="ct_agregarSede()"><i class="fa-solid fa-plus"></i> Agregar</button>
+      </div>
+      <p style="font-size:11.5px;color:var(--gray-3);margin:4px 0 12px">Sube el logo de cada sede con el ícono de imagen. Se reutilizará automáticamente en el calendario.</p>
+      <div id="ctSedesList" class="ct-sedes-list"></div>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="turnoModalT2">
   <div class="modal modal-xl">
     <div class="modal-head">
@@ -2313,7 +2332,17 @@
         <div class="fg"><label>Tipo</label>
           <select id="tTipoT2"><option value="Especialista">Especialista</option><option value="Residente">Residente</option></select>
         </div>
-        <div class="fg"><label>Sede</label><input type="text" id="tSedeT2" placeholder="Clínica Norte…"/></div>
+        <div class="fg"><label>Sede <button type="button" onclick="ct_openSedesModal()" style="font-size:10.5px;color:var(--blue);background:none;border:none;cursor:pointer;font-weight:700"><i class="fa-solid fa-gear"></i> Gestionar</button></label>
+          <select id="tSedeT2"><option value="">— Seleccionar sede —</option></select>
+        </div>
+        <div class="fg"><label>Servicio</label>
+          <select id="tServicioT2">
+            <option value="Consulta">Consulta</option>
+            <option value="Cirugía">Cirugía</option>
+            <option value="Consulta y Cirugía">Consulta y Cirugía</option>
+            <option value="No disponible">No disponible</option>
+          </select>
+        </div>
         <!-- Multi-especialista (solo para nuevo turno) -->
         <div class="fg full" id="espMultiWrapT2">
           <label>Especialistas * <span style="font-size:10.5px;color:var(--gray-3);font-weight:400">— selecciona uno o varios</span></label>

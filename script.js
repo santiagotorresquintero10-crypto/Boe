@@ -7867,9 +7867,147 @@ function chkKey(nombre) {
 let ct_turnos = [];
 let ct_turnosCurrentDate = new Date();
 let ct_editTurnoId = null;
+let ct_sedes = [];   // [{id, nombre, ciudad, logo(base64), sigla}] — catálogo propio de la vista copia
+
+/* Festivos de Colombia (fijos + calculados). Clave: 'MM-DD' o fecha exacta 'YYYY-MM-DD'. */
+const CT_FESTIVOS_FIJOS = {
+  '01-01':'Año Nuevo', '05-01':'Día del Trabajo', '07-20':'Día de la Independencia',
+  '08-07':'Batalla de Boyacá', '12-08':'Inmaculada Concepción', '12-25':'Navidad',
+};
+/* Festivos que se trasladan al lunes (Ley Emiliani) y móviles por año — tabla 2026 */
+const CT_FESTIVOS_POR_ANIO = {
+  2026: {
+    '01-01':'Año Nuevo','01-12':'Día de los Reyes Magos','03-23':'Día de San José',
+    '03-29':'Domingo de Ramos','04-02':'Jueves Santo','04-03':'Viernes Santo',
+    '05-01':'Día del Trabajo','05-18':'Día de la Ascensión','06-08':'Corpus Christi',
+    '06-15':'Sagrado Corazón','06-29':'San Pedro y San Pablo','07-20':'Día de la Independencia',
+    '08-07':'Batalla de Boyacá','08-17':'Asunción de la Virgen','10-12':'Día de la Raza',
+    '11-02':'Todos los Santos','11-16':'Independencia de Cartagena','12-08':'Inmaculada Concepción',
+    '12-25':'Navidad',
+  },
+};
+/* Devuelve el nombre del festivo para una fecha 'YYYY-MM-DD', o null */
+function ct_festivoDe(dateStr){
+  const [y,mm,dd] = dateStr.split('-');
+  const anio = Number(y);
+  const md = `${mm}-${dd}`;
+  if (CT_FESTIVOS_POR_ANIO[anio] && CT_FESTIVOS_POR_ANIO[anio][md]) return CT_FESTIVOS_POR_ANIO[anio][md];
+  return null;
+}
+
+async function ct_cargarSedes(){
+  try {
+    const snap = await getDocs(collection(db,'sedes_v2'));
+    ct_sedes = snap.docs.map(d=>({id:d.id,...d.data()}));
+  } catch(e){ ct_sedes = []; }
+}
+function ct_sedePorNombre(nombre){
+  if (!nombre) return null;
+  const n = nombre.trim().toLowerCase();
+  return ct_sedes.find(s => (s.nombre||'').trim().toLowerCase() === n) || null;
+}
+function ct_siglaDe(nombre){
+  if (!nombre) return '';
+  return nombre.trim().split(/\s+/).map(w=>w[0]).join('').slice(0,3).toUpperCase();
+}
+
+/* ── GESTIÓN DE SEDES (catálogo con logo, ciudad) ── */
+window.ct_openSedesModal = () => {
+  ct_renderSedesList();
+  document.getElementById('ctSedesModal')?.classList.add('open');
+};
+window.ct_closeSedesModal = () => document.getElementById('ctSedesModal')?.classList.remove('open');
+
+function ct_renderSedesList(){
+  const cont = document.getElementById('ctSedesList');
+  if (!cont) return;
+  if (!ct_sedes.length){
+    cont.innerHTML = '<div style="color:var(--gray-3);font-size:13px;padding:12px">Sin sedes. Agrega la primera.</div>';
+    return;
+  }
+  const sedesOrd = ct_sedes.slice().sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||'','es',{sensitivity:'base'}));
+  cont.innerHTML = sedesOrd.map(s=>`
+    <div class="ct-sede-item">
+      <div class="ct-sede-logo">${s.logo?`<img src="${s.logo}" alt=""/>`:`<span class="ct-sede-sigla">${escHtml(s.sigla||ct_siglaDe(s.nombre))}</span>`}</div>
+      <div class="ct-sede-info">
+        <div class="ct-sede-nombre">${escHtml(s.nombre||'')}</div>
+        <div class="ct-sede-ciudad">${escHtml(s.ciudad||'—')}</div>
+      </div>
+      <div class="ct-sede-acts">
+        <label class="ct-sede-upload" title="Subir logo"><i class="fa-solid fa-image"></i>
+          <input type="file" accept="image/*" style="display:none" onchange="ct_subirLogoSede('${s.id}',this)"/>
+        </label>
+        <button onclick="ct_editarSede('${s.id}')" title="Editar"><i class="fa-solid fa-pen"></i></button>
+        <button onclick="ct_eliminarSede('${s.id}')" title="Eliminar" class="del"><i class="fa-solid fa-trash"></i></button>
+      </div>
+    </div>`).join('');
+}
+
+window.ct_agregarSede = async () => {
+  const nombre = document.getElementById('ctSedeNombre')?.value.trim();
+  const ciudad = document.getElementById('ctSedeCiudad')?.value.trim();
+  if (!nombre) { toast('Escribe el nombre de la sede.','error'); return; }
+  try {
+    await addDoc(collection(db,'sedes_v2'), { nombre, ciudad:ciudad||'', logo:'', sigla:ct_siglaDe(nombre), createdAt:serverTimestamp() });
+    document.getElementById('ctSedeNombre').value='';
+    document.getElementById('ctSedeCiudad').value='';
+    await ct_cargarSedes();
+    ct_renderSedesList();
+    ct_poblarSelectSede();
+    toast('Sede agregada.','success');
+  } catch(e){ toast('Error: '+e.message,'error'); }
+};
+
+window.ct_editarSede = async (id) => {
+  const s = ct_sedes.find(x=>x.id===id); if(!s) return;
+  const nombre = prompt('Nombre de la sede:', s.nombre||''); if(nombre===null) return;
+  const ciudad = prompt('Ciudad:', s.ciudad||''); if(ciudad===null) return;
+  try {
+    await updateDoc(doc(db,'sedes_v2',id), { nombre:nombre.trim(), ciudad:ciudad.trim(), sigla:ct_siglaDe(nombre.trim()) });
+    await ct_cargarSedes(); ct_renderSedesList(); ct_poblarSelectSede();
+    ct_renderTurnos();
+    toast('Sede actualizada.','success');
+  } catch(e){ toast('Error: '+e.message,'error'); }
+};
+
+window.ct_eliminarSede = async (id) => {
+  const s = ct_sedes.find(x=>x.id===id); if(!s) return;
+  if (!confirm(`¿Eliminar la sede "${s.nombre}"? Los turnos que la usan conservarán el nombre pero perderán el logo.`)) return;
+  try {
+    await deleteDoc(doc(db,'sedes_v2',id));
+    await ct_cargarSedes(); ct_renderSedesList(); ct_poblarSelectSede(); ct_renderTurnos();
+    toast('Sede eliminada.','success');
+  } catch(e){ toast('Error: '+e.message,'error'); }
+};
+
+window.ct_subirLogoSede = (id, input) => {
+  const file = input.files[0]; if(!file) return;
+  if (file.size > 900*1024) { toast('Imagen muy grande (máx 900KB).','error'); return; }
+  const reader = new FileReader();
+  reader.onload = async (ev) => {
+    try {
+      await updateDoc(doc(db,'sedes_v2',id), { logo: ev.target.result });
+      await ct_cargarSedes(); ct_renderSedesList(); ct_renderTurnos();
+      toast('Logo actualizado.','success');
+    } catch(e){ toast('Error al guardar logo: '+e.message,'error'); }
+  };
+  reader.readAsDataURL(file);
+};
+
+/* Poblar el <select> de sede en el modal de turno */
+function ct_poblarSelectSede(){
+  const sel = document.getElementById('tSedeT2');
+  if (!sel || sel.tagName !== 'SELECT') return;
+  const actual = sel.value;
+  const sedesOrd = ct_sedes.slice().sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||'','es',{sensitivity:'base'}));
+  sel.innerHTML = '<option value="">— Seleccionar sede —</option>'
+    + sedesOrd.map(s=>`<option value="${escHtml(s.nombre)}">${escHtml(s.nombre)}${s.ciudad?' · '+escHtml(s.ciudad):''}</option>`).join('');
+  if (actual) sel.value = actual;
+}
 
 function ct_initTurnos() {
   ct_turnosCurrentDate = new Date();
+  ct_cargarSedes().then(()=>{ ct_renderTurnos(); ct_poblarSelectSede(); });
   ct_renderTurnos();
   ct_renderTurnosTabla();
   ct_populateTurnosFilters();
@@ -7913,50 +8051,83 @@ function ct_renderCalMes() {
   const daysInMonth = new Date(y,m+1,0).getDate();
   const today = new Date().toISOString().slice(0,10);
 
+  // ── Detección de cruces: mismo especialista en 2+ sedes distintas el mismo día ──
+  const crucesPorDia = {};   // dateStr -> Set(especialistas en cruce)
+  const porDiaEsp = {};      // dateStr -> { esp -> Set(sedes) }
+  ct_turnos.forEach(t=>{
+    const f = t.fecha||''; if(!f) return;
+    const esp = (t.especialista||'').trim(); if(!esp) return;
+    const sede = (t.sede||'').trim();
+    porDiaEsp[f] = porDiaEsp[f]||{};
+    porDiaEsp[f][esp] = porDiaEsp[f][esp]||new Set();
+    if (sede) porDiaEsp[f][esp].add(sede);
+  });
+  Object.keys(porDiaEsp).forEach(f=>{
+    Object.keys(porDiaEsp[f]).forEach(esp=>{
+      if (porDiaEsp[f][esp].size >= 2) {
+        crucesPorDia[f] = crucesPorDia[f]||new Set();
+        crucesPorDia[f].add(esp);
+      }
+    });
+  });
+
   let html = `<div class="turnos-cal-grid">`;
   DIAS_SEMANA.forEach(d => { html += `<div class="turnos-cal-dow">${d}</div>`; });
 
-  // Días del mes anterior
   const prevDays = new Date(y,m,0).getDate();
   for(let i=firstDay-1; i>=0; i--) {
     html += `<div class="turnos-cal-day other-month"><div class="turnos-day-num">${prevDays-i}</div></div>`;
   }
 
-  // Días del mes actual
   for(let d=1; d<=daysInMonth; d++) {
     const dateStr = `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
     const isToday = dateStr === today;
-    // Include ct_turnos whose range covers this day
-    // On the last day (HASTA), only show REGRESO — not the spanning IDA record
+    const festivo = ct_festivoDe(dateStr);
+    const tieneCruce = crucesPorDia[dateStr] && crucesPorDia[dateStr].size>0;
+
     const covering = ct_turnos.filter(t=>{
       const start = t.fecha||'';
       const end   = t.fechaHasta||t.fecha||'';
       return dateStr >= start && dateStr <= end;
     });
-    // If there's a REGRESO record on this exact date, exclude IDA records that merely span through
     const hasRegresoHere = covering.some(t => t.fecha === dateStr && t.trayecto === 'REGRESO');
     const dayTurnos = hasRegresoHere
       ? covering.filter(t => !(t.trayecto === 'IDA' && t.fecha !== dateStr))
       : covering;
 
     const events = dayTurnos.map(t=>{
-      const cls = t.trayecto==='IDA'?'ida':t.trayecto==='REGRESO'?'regreso':'default';
-      // Mostrar SOLO nombre del especialista
-      const nombre = (t.especialista||'—');
-      return `<div class="turnos-cal-event ${cls}"
+      const esNoDisp = t.servicio === 'No disponible' || t.noDisponible;
+      if (esNoDisp) {
+        const sigla = ct_siglaDe(t.especialista||'');
+        return `<div class="turnos-cal-event nodisp"
+          onclick="event.stopPropagation();ct_openTurnoModal('${t.id}')"
+          title="${escHtml(t.especialista||'')} · No disponible">
+          <span class="cal-ev-sigla">${escHtml(sigla||'—')}</span>
+          <span class="cal-ev-serv">No disponible</span>
+        </div>`;
+      }
+      const sede = ct_sedePorNombre(t.sede);
+      const servicio = t.servicio || t.tipo || '';
+      const logoHtml = sede && sede.logo
+        ? `<img class="cal-ev-logo" src="${sede.logo}" alt=""/>`
+        : `<span class="cal-ev-siglabox">${escHtml(sede ? (sede.sigla||ct_siglaDe(sede.nombre)) : ct_siglaDe(t.sede||t.especialista||'—'))}</span>`;
+      const espCruce = tieneCruce && crucesPorDia[dateStr].has((t.especialista||'').trim());
+      return `<div class="turnos-cal-event sede-ev ${espCruce?'con-cruce':''}"
         onclick="event.stopPropagation();ct_openTurnoModal('${t.id}')"
-        title="${escHtml(t.especialista||'')} · ${t.trayecto||''}">
-        <span class="cal-ev-name">${escHtml(nombre)}</span>
+        title="${escHtml(t.especialista||'')}${t.sede?' · '+escHtml(t.sede):''}${servicio?' · '+escHtml(servicio):''}">
+        <div class="cal-ev-top">${logoHtml}${espCruce?'<i class="fa-solid fa-triangle-exclamation cal-ev-warn"></i>':''}</div>
+        ${servicio?`<span class="cal-ev-serv">${escHtml(servicio)}</span>`:''}
       </div>`;
     }).join('');
 
-    html += `<div class="turnos-cal-day ${isToday?'today':''}" onclick="ct_openTurnoModal(null,'${dateStr}')">
-      <div class="turnos-day-num">${d}</div>
+    const clsFestivo = festivo ? 'es-festivo' : '';
+    html += `<div class="turnos-cal-day ${isToday?'today':''} ${clsFestivo}" onclick="ct_openTurnoModal(null,'${dateStr}')">
+      <div class="turnos-day-num">${d}${tieneCruce?' <i class="fa-solid fa-triangle-exclamation cal-day-warn"></i>':''}</div>
+      ${festivo?`<div class="cal-day-festivo">festivo</div>`:''}
       ${events}
     </div>`;
   }
 
-  // Días del mes siguiente
   const totalCells = firstDay + daysInMonth;
   const remaining = (7 - (totalCells % 7)) % 7;
   for(let d=1; d<=remaining; d++) {
@@ -7964,7 +8135,68 @@ function ct_renderCalMes() {
   }
 
   html += '</div>';
+
+  // ── Secciones informativas debajo del calendario ──
+  html += ct_renderLeyendaSedes(y, m);
+  html += ct_renderFestivosMes(y, m);
+  html += ct_renderCrucesMes(crucesPorDia);
+
   wrap.innerHTML = html;
+}
+
+/* Leyenda de sedes usadas en el mes visible */
+function ct_renderLeyendaSedes(y, m){
+  const prefijo = `${y}-${String(m+1).padStart(2,'0')}`;
+  const nombresUsados = new Set();
+  ct_turnos.forEach(t=>{
+    if ((t.fecha||'').startsWith(prefijo) && (t.sede||'').trim()) nombresUsados.add(t.sede.trim());
+  });
+  if (!nombresUsados.size) return '';
+  const items = [...nombresUsados].sort((a,b)=>a.localeCompare(b,'es',{sensitivity:'base'})).map(nombre=>{
+    const s = ct_sedePorNombre(nombre);
+    const logo = s && s.logo
+      ? `<img src="${s.logo}" alt=""/>`
+      : `<span class="ct-leyenda-sigla">${escHtml(s?(s.sigla||ct_siglaDe(s.nombre)):ct_siglaDe(nombre))}</span>`;
+    const ciudad = s && s.ciudad ? s.ciudad : '';
+    return `<div class="ct-leyenda-item">
+      <div class="ct-leyenda-logo">${logo}</div>
+      <div><div class="ct-leyenda-nombre">${escHtml(nombre)}</div>${ciudad?`<div class="ct-leyenda-ciudad">${escHtml(ciudad)}</div>`:''}</div>
+    </div>`;
+  }).join('');
+  return `<div class="ct-seccion"><h3 class="ct-seccion-tit">Sedes</h3><div class="ct-leyenda-grid">${items}</div></div>`;
+}
+
+/* Lista de festivos del mes visible */
+function ct_renderFestivosMes(y, m){
+  const daysInMonth = new Date(y,m+1,0).getDate();
+  const fest = [];
+  for(let d=1; d<=daysInMonth; d++){
+    const dateStr = `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const nom = ct_festivoDe(dateStr);
+    if (nom) fest.push(`${d} ${MESES_TURN[m].slice(0,3).toLowerCase()} · ${nom}`);
+  }
+  if (!fest.length) return '';
+  return `<div class="ct-festivos-banner"><strong>Festivos (no laboral):</strong> ${fest.join('  ·  ')}</div>`;
+}
+
+/* Resumen de cruces del mes */
+function ct_renderCrucesMes(crucesPorDia){
+  const y = ct_turnosCurrentDate.getFullYear();
+  const m = ct_turnosCurrentDate.getMonth();
+  const prefijo = `${y}-${String(m+1).padStart(2,'0')}`;
+  const filas = [];
+  Object.keys(crucesPorDia).sort().forEach(f=>{
+    if (!f.startsWith(prefijo)) return;
+    const d = Number(f.split('-')[2]);
+    [...crucesPorDia[f]].forEach(esp=>{
+      filas.push(`${d} ${MESES_TURN[m].slice(0,3).toLowerCase()} · ${esp}`);
+    });
+  });
+  if (!filas.length) return '';
+  return `<div class="ct-cruces-banner">
+    <div class="ct-cruces-head"><i class="fa-solid fa-triangle-exclamation"></i> Revisar cruces (mismo médico, 2 sedes el mismo día):</div>
+    <div class="ct-cruces-list">${filas.map(f=>`<div>${escHtml(f)}</div>`).join('')}</div>
+  </div>`;
 }
 
 function ct_renderCalSemana() {
@@ -8196,7 +8428,10 @@ window.ct_openTurnoModal = (id=null, dateStr=null) => {
 
   // Resto de campos
   document.getElementById('tTipoT2').value          = t?.tipo||'Especialista';
+  ct_poblarSelectSede();
   document.getElementById('tSedeT2').value          = t?.sede||'';
+  const selServ = document.getElementById('tServicioT2');
+  if (selServ) selServ.value = t?.servicio || 'Consulta';
   document.getElementById('tTiquetesT2').value      = t?.tiquetes||'';
   document.getElementById('tChecklist1T2').value    = t?.checklist1||'';
   document.getElementById('tConceptoT2').value      = t?.concepto||'';
@@ -8327,6 +8562,8 @@ window.ct_saveTurno = async () => {
   const baseData = () => ({
     tipo:   document.getElementById('tTipoT2').value,
     sede:   document.getElementById('tSedeT2').value.trim(),
+    servicio: document.getElementById('tServicioT2')?.value||'',
+    noDisponible: document.getElementById('tServicioT2')?.value==='No disponible',
     observacion:        document.getElementById('tObservacionT2')?.value.trim()||'',
     esResidente:        document.getElementById('tEsResidenteT2')?.checked||false,
     residenteClienteId: document.getElementById('tResidenteClienteT2')?.value||'',
@@ -8424,26 +8661,43 @@ window.ct_imprimirTurnosMesActual = () => {
 
   for(let i=0;i<firstDay;i++) calHtml += `<div class="tp-day tp-other"></div>`;
 
+  // ── Detección de cruces para impresión ──
+  const porDiaEspP = {};
+  ct_turnos.forEach(t=>{
+    const f=t.fecha||''; if(!f) return;
+    const esp=(t.especialista||'').trim(); if(!esp) return;
+    porDiaEspP[f]=porDiaEspP[f]||{}; porDiaEspP[f][esp]=porDiaEspP[f][esp]||new Set();
+    if((t.sede||'').trim()) porDiaEspP[f][esp].add(t.sede.trim());
+  });
+  const cruceEnDia = (f,esp) => porDiaEspP[f]&&porDiaEspP[f][esp]&&porDiaEspP[f][esp].size>=2;
+
   for(let dd=1;dd<=daysInMonth;dd++){
     const ds = `${anio}-${String(mes).padStart(2,'0')}-${String(dd).padStart(2,'0')}`;
-    // Range filter: show turno on every day it covers
+    const festivo = ct_festivoDe(ds);
     const coveringT = ct_turnos.filter(t=>{
       const s=t.fecha||'', e=t.fechaHasta||t.fecha||'';
       return ds>=s && ds<=e;
     }).sort((a,b)=>(a.especialista||'').localeCompare(b.especialista||''));
-    // On HASTA day: only show REGRESO, not the spanning IDA
     const hasRegT = coveringT.some(t=>t.fecha===ds&&t.trayecto==='REGRESO');
     const dayT = hasRegT
       ? coveringT.filter(t=>!(t.trayecto==='IDA'&&t.fecha!==ds))
       : coveringT;
     const isToday = ds === today;
+    const hayCruceDia = dayT.some(t=>cruceEnDia(ds,(t.especialista||'').trim()));
     const evHtml = dayT.map(t=>{
-      const cls = t.trayecto==='REGRESO'?'tp-ev-reg':'tp-ev-ida';
-      const info = t.especialista || '';
-      return `<div class="tp-ev ${cls}">${escHtml(info)}</div>`;
+      if (t.servicio==='No disponible' || t.noDisponible) {
+        return `<div class="tp-ev tp-ev-nodisp">${escHtml(ct_siglaDe(t.especialista||''))} · No disponible</div>`;
+      }
+      const sede = ct_sedePorNombre(t.sede);
+      const logo = sede && sede.logo
+        ? `<img class="tp-ev-logo" src="${sede.logo}"/>`
+        : `<span class="tp-ev-sigla">${escHtml(sede?(sede.sigla||ct_siglaDe(sede.nombre)):ct_siglaDe(t.sede||'—'))}</span>`;
+      const serv = t.servicio || t.tipo || '';
+      const warn = cruceEnDia(ds,(t.especialista||'').trim()) ? ' ⚠' : '';
+      return `<div class="tp-ev tp-ev-sede">${logo}${serv?`<div class="tp-ev-serv">${escHtml(serv)}${warn}</div>`:''}</div>`;
     }).join('');
-    calHtml += `<div class="tp-day${isToday?' tp-today':''}">
-      <div class="tp-num">${dd}</div>${evHtml}
+    calHtml += `<div class="tp-day${isToday?' tp-today':''}${festivo?' tp-festivo':''}">
+      <div class="tp-num">${dd}${hayCruceDia?' ⚠':''}</div>${festivo?`<div class="tp-fest">festivo</div>`:''}${evHtml}
     </div>`;
   }
 
@@ -8451,6 +8705,39 @@ window.ct_imprimirTurnosMesActual = () => {
   const rem   = (7-(total%7))%7;
   for(let i=0;i<rem;i++) calHtml += `<div class="tp-day tp-other"></div>`;
   calHtml += `</div>`;
+
+  // ── Leyenda de sedes del mes (impresión) ──
+  const prefijoP = `${anio}-${String(mes).padStart(2,'0')}`;
+  const sedesUsadas = new Set();
+  ct_turnos.forEach(t=>{ if((t.fecha||'').startsWith(prefijoP)&&(t.sede||'').trim()) sedesUsadas.add(t.sede.trim()); });
+  let leyendaHtml = '';
+  if (sedesUsadas.size){
+    const items = [...sedesUsadas].sort((a,b)=>a.localeCompare(b,'es',{sensitivity:'base'})).map(nombre=>{
+      const s = ct_sedePorNombre(nombre);
+      const logo = s&&s.logo ? `<img src="${s.logo}"/>` : `<span class="tp-ley-sigla">${escHtml(s?(s.sigla||ct_siglaDe(s.nombre)):ct_siglaDe(nombre))}</span>`;
+      return `<div class="tp-ley-item">${logo}<div><b>${escHtml(nombre)}</b>${s&&s.ciudad?`<br><span>${escHtml(s.ciudad)}</span>`:''}</div></div>`;
+    }).join('');
+    leyendaHtml = `<div class="tp-ley-title">Sedes</div><div class="tp-ley-grid">${items}</div>`;
+  }
+  const festList = [];
+  for(let d=1; d<=daysInMonth; d++){
+    const ds = `${anio}-${String(mes).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const nom = ct_festivoDe(ds);
+    if (nom) festList.push(`${d} ${mesesNombres[mes].slice(0,3).toLowerCase()} · ${nom}`);
+  }
+  const festHtml = festList.length ? `<div class="tp-fest-banner"><b>Festivos (no laboral):</b> ${festList.join('  ·  ')}</div>` : '';
+  const crucesList = [];
+  Object.keys(porDiaEspP).sort().forEach(f=>{
+    if(!f.startsWith(prefijoP)) return;
+    Object.keys(porDiaEspP[f]).forEach(esp=>{
+      if(porDiaEspP[f][esp].size>=2){
+        const d = Number(f.split('-')[2]);
+        crucesList.push(`${d} ${mesesNombres[mes].slice(0,3).toLowerCase()} · ${esp}`);
+      }
+    });
+  });
+  const crucesHtml = crucesList.length ? `<div class="tp-cruce-banner"><b>\u26a0 Revisar cruces (mismo m\u00e9dico, 2 sedes el mismo d\u00eda):</b><br>${crucesList.join('<br>')}</div>` : '';
+  calHtml += leyendaHtml + festHtml + crucesHtml;
 
   // ── Construir tabla de registros del mes ──
   const mesT = ct_turnos.filter(t=>t.fecha&&
