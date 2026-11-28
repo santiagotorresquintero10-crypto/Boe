@@ -1,0 +1,234 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Sesión válida y usuario NO desactivado/eliminado (bloqueados/{uid} solo lo escribe el servidor).
+    // Así un usuario desactivado pierde el acceso a los datos de inmediato, aunque su sesión siga abierta.
+    function isAuth() { return request.auth != null && !exists(/databases/$(database)/documents/bloqueados/$(request.auth.uid)); }
+
+    match /doctors/{id}   { allow read, write: if isAuth(); }
+    match /formatos/{id}  { allow read, write: if isAuth(); }
+    match /groups/{id}    { allow read, write: if isAuth(); }
+    match /facturas/{id}  { allow read, write: if isAuth(); }
+    match /doctorStyles/{id} { allow read, write: if isAuth(); }
+    // ══ 9.9 · ROLES POR ACCIÓN Y CANDADO ══
+    // Mientras uiPrefs/seguridad.rolesActivos no esté encendido, todo funciona como antes (transición).
+    function rolesActivos() {
+      return exists(/databases/$(database)/documents/uiPrefs/seguridad)
+        && get(/databases/$(database)/documents/uiPrefs/seguridad).data.get('rolesActivos', false) == true;
+    }
+    function rol(r) {
+      return !rolesActivos() || (exists(/databases/$(database)/documents/permisos/$(request.auth.uid))
+        && r in get(/databases/$(database)/documents/permisos/$(request.auth.uid)).data.get('roles', []));
+    }
+    function cambios() { return request.resource.data.diff(resource.data).affectedKeys(); }
+    function protegidosEgreso() {
+      return ['factura','concepto','entidadId','fechaFacturacion','honorarioMes','valorEntidad','ica','reteHonorarios',
+              'notaCredito','administracion','valorEspecialista','valorEntidadNeto','hijas'];
+    }
+    function candadoAnt() { return resource.data.get('candado', {}); }
+    function candadoNue() { return request.resource.data.get('candado', {}); }
+    // Abierto por quien escribe y vigente (máximo 30 minutos)
+    function abiertoPorMi(c) {
+      return c.get('abierto', null) != null && c.abierto.uid == request.auth.uid && request.time < c.abierto.hasta;
+    }
+    // Solo cambia el candado: abrirlo exige haber escrito la contraseña hace menos de 10 min y dura máximo 31 min;
+    // marcarlo «no cerrado» (quitar una revisión) exige tenerlo abierto uno mismo.
+    function cambioCandadoValido() {
+      return (candadoNue().get('abierto', null) == null
+              || candadoNue().get('abierto', null) == candadoAnt().get('abierto', null)
+              || (candadoNue().abierto.uid == request.auth.uid
+                  && candadoNue().abierto.hasta <= request.time + duration.value(31, 'm')
+                  && request.auth.token.auth_time > request.time.toMillis() / 1000 - 600))
+        && (candadoNue().get('cerrado', false) == true || candadoAnt().get('cerrado', false) == false || abiertoPorMi(candadoAnt()));
+    }
+    match /egresos/{id} {
+      allow read: if isAuth();
+      allow create: if isAuth() && rol('facturacion');
+      allow update: if isAuth() && (
+        (cambios().hasOnly(['candado']) && cambioCandadoValido())
+        || (!cambios().hasAny(['candado'])
+            && (!cambios().hasAny(protegidosEgreso()) || rol('facturacion'))
+            && (!cambios().hasAny(['abonos','abonosEliminados']) || rol('contabilidad'))
+            && (rol('facturacion') || rol('contabilidad'))
+            && (candadoAnt().get('cerrado', false) != true || !cambios().hasAny(protegidosEgreso()) || abiertoPorMi(candadoAnt()))));
+      allow delete: if isAuth() && rol('facturacion') && candadoAnt().get('cerrado', false) != true;
+    }
+    match /tablasEgreso/{id}  { allow read: if isAuth(); allow write: if isAuth() && (rol('facturacion') || rol('contabilidad')); }
+    // Historial de cambios por factura: se agrega a nombre propio; nadie lo edita ni lo borra
+    // JARVIS: digitación de historias clínicas. Solo quien digitó (o un administrador) ve y cambia sus registros.
+    match /jarvisRegistros/{id} {
+      allow read, update, delete: if isAuth() && (resource.data.uid == request.auth.uid || esAdmin());
+      allow create: if isAuth() && request.resource.data.uid == request.auth.uid;
+    }
+    match /jarvisCache/{id} {
+      allow read, delete: if isAuth() && resource.data.uid == request.auth.uid;
+      allow create, update: if isAuth() && request.resource.data.uid == request.auth.uid && id.matches(request.auth.uid + '_.*');
+    }
+    match /historialEgresos/{id} {
+      allow read: if isAuth();
+      allow create: if isAuth() && request.resource.data.porUid == request.auth.uid && request.resource.data.egresoId is string;
+      allow update, delete: if false;
+    }
+    match /uiPrefs/seguridad {
+      allow read: if isAuth();
+      allow write: if esAdmin();
+    }
+    match /turnos/{id}        { allow read, write: if isAuth(); }
+
+    // users: cada persona crea/edita su propio registro (nombre, foto, etc.), pero NO su estado ni los datos de auditoría;
+    // su correo solo puede quedar igual al de su sesión (es decir, después de confirmarlo con el enlace de Firebase).
+    // El administrador puede corregir el nombre de otros y desactivarlos/reactivarlos (nunca a sí mismo).
+    function camposAdminUsuario() {
+      return ['estado','desactivadoPor','desactivadoPorUid','desactivadoISO','desactivadoMotivo',
+              'reactivadoPor','reactivadoPorUid','reactivadoISO','editadoPor','editadoPorUid','editadoISO',
+              'eliminadoPor','eliminadoPorUid','eliminadoISO','eliminadoMotivo'];
+    }
+    match /users/{id} {
+      allow read: if isAuth();
+      allow create: if isAuth() && request.auth.uid == id && !('estado' in request.resource.data);
+      allow update: if isAuth() && (
+        (request.auth.uid == id
+          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(camposAdminUsuario())
+          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['email'])
+              || request.resource.data.email == request.auth.token.email))
+        || (esAdmin() && request.auth.uid != id
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['nombre','apellido','nombreCompleto'].concat(camposAdminUsuario()))));
+      allow delete: if false;
+    }
+    // Usuarios desactivados: solo un administrador los crea o quita (nunca a sí mismo); la persona puede leer el suyo
+    match /bloqueados/{uid} {
+      allow read: if request.auth != null && (request.auth.uid == uid || esAdmin());
+      allow create, update: if esAdmin() && request.auth.uid != uid;
+      allow delete: if esAdmin();
+    }
+    // Historial de cambios de usuarios: se agrega a nombre propio; nadie lo edita ni lo borra
+    match /auditoriaUsuarios/{id} {
+      allow read: if esAdmin();
+      allow create: if isAuth() && request.resource.data.porUid == request.auth.uid
+                    && (esAdmin() || request.resource.data.uid == request.auth.uid);
+      allow update, delete: if false;
+    }
+
+    match /tareas/{id} {
+      allow create: if isAuth();
+      allow read, update, delete: if isAuth() && (
+        resource.data.createdBy == request.auth.uid ||
+        resource.data.asignadoId == request.auth.uid
+      );
+    }
+
+    // Notificaciones: cualquier usuario autenticado puede crear
+    // Solo el destinatario puede leer y actualizar las suyas
+    match /notificaciones/{id} {
+      allow create: if isAuth();
+      allow read, update, delete: if isAuth() &&
+        resource.data.toUid == request.auth.uid;
+    }
+
+    // Canales fijos de chat
+    match /chat_general/{m}     { allow read, write: if isAuth(); }
+    match /chat_facturacion/{m} { allow read, write: if isAuth(); }
+    match /chat_radicacion/{m}  { allow read, write: if isAuth(); }
+    match /chat_glosas/{m}      { allow read, write: if isAuth(); }
+    match /chat_avisos/{m}      { allow read, write: if isAuth(); }
+
+    // ══ PERMISOS POR USUARIO ══
+    // Solo los administradores pueden escribir permisos.
+    // Cada usuario puede leer su propio documento; los admins pueden leer todos.
+    function esAdminEmail() {
+      return isAuth() && request.auth.token.email in [
+        'santiagotorresquintero10@gmail.com',
+        'yajaira.quinteroj@gmail.com'
+      ];
+    }
+    // Administrador = correo de la lista base o permisos/{uid}.admin == true (este campo solo lo escribe otro administrador)
+    function esAdmin() {
+      return esAdminEmail() || (isAuth()
+        && exists(/databases/$(database)/documents/permisos/$(request.auth.uid))
+        && get(/databases/$(database)/documents/permisos/$(request.auth.uid)).data.get('admin', false) == true);
+    }
+    match /permisos/{uid} {
+      allow read:  if isAuth() && (request.auth.uid == uid || esAdmin());
+      allow write: if esAdmin();
+    }
+
+    // ══ COMPROBANTES DE PAGO (UROEXPERTOS) ══
+    // Acceso para quien tiene la vista UROEXPERTOS (o no tiene permisos restringidos) y para admins.
+    function puedeEgresos() {
+      return isAuth() && (
+        esAdmin() ||
+        !exists(/databases/$(database)/documents/permisos/$(request.auth.uid)) ||
+        // un documento de permisos con solo roles (sin lista de vistas) = acceso a todas las vistas, como en la app
+        !(get(/databases/$(database)/documents/permisos/$(request.auth.uid)).data.get('vistas', null) is list) ||
+        'egresos' in get(/databases/$(database)/documents/permisos/$(request.auth.uid)).data.vistas
+      );
+    }
+    function metaComp(id) { return /databases/$(database)/documents/comprobantes/$(id); }
+    match /comprobantes/{id} {
+      allow read:   if puedeEgresos();
+      allow create: if puedeEgresos() && request.resource.data.subidoPorUid == request.auth.uid
+                    && request.resource.data.estado == 'subiendo';
+      // Solo quien lo subió marca la carga como completa
+      allow update: if puedeEgresos() && resource.data.subidoPorUid == request.auth.uid
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['estado','verificadoISO']);
+      // Eliminar: administradores o quien lo subió
+      allow delete: if puedeEgresos() && (esAdmin() || resource.data.subidoPorUid == request.auth.uid);
+    }
+    match /comprobantesChunks/{id} {
+      allow read:   if puedeEgresos();
+      allow create: if puedeEgresos()
+                    && request.resource.data.data is string
+                    && request.resource.data.data.size() <= 750000
+                    && exists(metaComp(request.resource.data.compId))
+                    && get(metaComp(request.resource.data.compId)).data.subidoPorUid == request.auth.uid;
+      allow update: if false;
+      allow delete: if puedeEgresos() && (
+                      esAdmin() ||
+                      !exists(metaComp(resource.data.compId)) ||
+                      get(metaComp(resource.data.compId)).data.subidoPorUid == request.auth.uid);
+    }
+
+    // ══ CATÁLOGO DE ENTIDADES ══
+    // Razón social obligatoria, NIT y DV como texto (conservan ceros). Nunca se borran: se inactivan.
+    function entidadValida(d) {
+      return d.razonSocial is string && d.razonSocial.size() > 0 && d.razonSocial.size() <= 160
+        && d.nit is string && d.nit.size() <= 15 && d.dv is string && d.dv.size() <= 1
+        && d.activo is bool;
+    }
+    match /entidades/{id} {
+      allow read: if isAuth();
+      allow create: if isAuth() && entidadValida(request.resource.data);
+      allow update: if isAuth() && entidadValida(request.resource.data);
+      allow delete: if false;
+    }
+
+    // Órdenes de pago a tesorería: no se borran ni se reescriben; solo se anulan con motivo (trazabilidad)
+    match /ordenesPago/{id} {
+      allow read: if isAuth();
+      allow create: if puedeEgresos() && rol('contabilidad') && request.resource.data.estado == 'vigente' && request.resource.data.numero is string;
+      allow update: if puedeEgresos() && (
+        (resource.data.estado == 'vigente' && request.resource.data.estado == 'anulada' && rol('contabilidad')
+          && request.resource.data.anuladaMotivo is string && request.resource.data.anuladaMotivo.size() > 0
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['estado','anuladaMotivo','anuladaPor','anuladaISO','regenerada','desactualizada']))
+        || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['pdfCompId','xlsCompId'])
+        || (rol('gerencia') && resource.data.estado == 'vigente' && request.resource.data.aprobada == true
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['aprobada','aprobadaPor','aprobadaPorUid','aprobadaISO'])));
+      allow delete: if false;
+    }
+
+    // Factura del especialista por hija: no se borra (el historial queda en el documento)
+    match /facturasEsp/{id} {
+      allow read: if isAuth();
+      allow create, update: if puedeEgresos() && rol('facturacion') && request.resource.data.egresoId is string && request.resource.data.hid is string;
+      allow delete: if false;
+    }
+
+    // Todo lo demás (grupos chat, groupMessages_, etc).
+    // IMPORTANTE: en Firestore basta con que UNA regla permita; por eso esta regla general
+    // excluye las colecciones protegidas (antes dejaba escribir 'permisos' a cualquier usuario).
+    match /{col}/{id} {
+      allow read, write: if isAuth() && !(col in ['permisos','comprobantes','comprobantesChunks','entidades','ordenesPago','facturasEsp','bloqueados','auditoriaUsuarios','historialEgresos','jarvisRegistros','jarvisCache']) && !(col == 'uiPrefs' && id == 'seguridad');
+    }
+  }
+}
